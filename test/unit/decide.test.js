@@ -453,3 +453,78 @@ test('Vic asking for a new meeting in a finished conversation starts a fresh thr
   const quiet = ctx({ message: { ...msg, cc_addresses: [] }, match_kind: 'conversation', thread: booked });
   assert.equal(run(quiet).plan.message.disposition, 'ignored_thread_finished');
 });
+
+// Window bounds of a calendarView request, as DateTimes.
+function calRange(calReq) {
+  const q = new URL(calReq.url).searchParams;
+  return { from: q.get('startDateTime'), to: q.get('endDateTime') };
+}
+const edt = (s) => new Date(`${s}-04:00`).toISOString().replace('.000', '');
+const cons = (earliest, latest = null) => ({ ...NO_CONSTRAINTS, earliest_date: earliest, latest_date: latest });
+const localDay = (iso) => new Date(new Date(iso).getTime() - 4 * 3600e3).toISOString().slice(0, 10);
+
+test('"3 weeks from today" → slots in that week, and the calendar read covers that window', () => {
+  const { plan, calReq } = run(ctx({ message: message({ body_text: 'Dana, let\'s meet 3 weeks from today. Sarah will find us a time.' }) }), {
+    classify: llm({ ...TRIGGER_CLS, constraints: cons('2026-10-26') }), draft: llm(GOOD_INTRO),
+  });
+  assert.deepEqual(plan.thread.transitions, ['PROPOSED']);
+  assert.equal(plan.offers.insert.length, 3);
+  for (const o of plan.offers.insert) assert.ok(localDay(o.start) >= '2026-10-26' && localDay(o.start) <= '2026-10-30', o.start);
+  const r = calRange(calReq);
+  assert.ok(r.from <= edt('2026-10-26T00:00:00'), `read starts by the window start (${r.from})`);
+  assert.ok(r.from > edt('2026-10-20T00:00:00'), `…not from today (${r.from})`);
+  assert.ok(r.to >= edt('2026-11-12T00:00:00'), `read reaches the end of window + widen (${r.to})`);
+});
+
+test('client "week of <date 4 weeks out>" → a round in that week, calendar read covers it', () => {
+  const { plan, calReq } = run(clientCtx('Could we look at the week of November 2 instead?'), {
+    classify: llm(CLIENT({ intent: 'counter', constraints: cons('2026-11-02', '2026-11-06') })),
+  });
+  assert.equal(plan.outbox.find((o) => o.kind === 'reply').purpose, 'new_round');
+  assert.equal(plan.offers.insert.length, 3);
+  for (const o of plan.offers.insert) assert.ok(localDay(o.start) >= '2026-11-02' && localDay(o.start) <= '2026-11-06', o.start);
+  const r = calRange(calReq);
+  assert.ok(r.from <= edt('2026-11-02T00:00:00') && r.to >= edt('2026-11-07T00:00:00'), JSON.stringify(r));
+});
+
+test('earliest_date + latest_date on one day → offers only that day', () => {
+  const { plan } = run(ctx(), { classify: llm({ ...TRIGGER_CLS, constraints: cons('2026-11-18', '2026-11-18') }), draft: llm(GOOD_INTRO) });
+  assert.equal(plan.offers.insert.length, 3);
+  for (const o of plan.offers.insert) assert.equal(localDay(o.start), '2026-11-18');
+});
+
+test('a request past max_horizon_days escalates with a clear reason, never offers nearer dates', () => {
+  const { plan } = run(ctx(), { classify: llm({ ...TRIGGER_CLS, constraints: cons('2027-01-15') }) });
+  assert.deepEqual(plan.thread.transitions, ['NEEDS_VIC']);
+  assert.match(plan.thread.set.escalation_reason, /Fri Jan 15, more than 90 days out/);
+  assert.deepEqual(plan.offers.insert, []);
+  assert.equal(plan.outbox.filter((o) => o.kind === 'create_hold').length, 0);
+  // the horizon is a setting
+  const c = ctx(); c.settings.max_horizon_days = 120;
+  assert.deepEqual(run(c, { classify: llm({ ...TRIGGER_CLS, constraints: cons('2027-01-15') }), draft: llm(GOOD_INTRO) }).plan.thread.transitions, ['PROPOSED']);
+});
+
+test('a specific counter time weeks out is checked against the calendar for that day', () => {
+  // Busy on Wed Nov 4 at 2pm; the old read (today + 19 days) would have missed it and accepted.
+  const cal = { value: [graphEvent('2026-11-04T13:30:00-04:00', '2026-11-04T15:00:00-04:00')] };
+  const { plan, calReq } = run(clientCtx('How about Wednesday November 4 at 2pm?'), {
+    classify: llm(CLIENT({ intent: 'counter', proposed_times: [{ date: '2026-11-04', time: '14:00' }] })), calendar: cal,
+  });
+  const r = calRange(calReq);
+  assert.ok(r.from <= edt('2026-11-04T00:00:00') && r.to >= edt('2026-11-05T00:00:00'), JSON.stringify(r));
+  assert.equal(plan.outbox.find((o) => o.kind === 'reply').purpose, 'counter_unavailable');
+  assert.ok(plan.offers.insert.every((o) => localDay(o.start) === '2026-11-04' && !o.start.startsWith('2026-11-04T18:00')));
+  // past the horizon → escalate rather than accept it
+  const far = run(clientCtx('How about January 20 at 2pm?'), {
+    classify: llm(CLIENT({ intent: 'counter', proposed_times: [{ date: '2027-01-20', time: '14:00' }] })),
+  });
+  assert.deepEqual(far.plan.thread.transitions, ['NEEDS_VIC']);
+  assert.match(far.plan.thread.set.escalation_reason, /more than 90 days out/);
+});
+
+test('the model gets a calendar table covering max_horizon_days', () => {
+  const { classifyReq } = run(ctx(), { classify: llm(TRIGGER_CLS), draft: llm(GOOD_INTRO) });
+  const user = classifyReq.body.messages[1].content;
+  assert.ok(user.includes('Sat 2027-01-02'), 'day 89 is in the table');
+  assert.ok(!user.includes('2027-01-03'), 'day 90 is not');
+});

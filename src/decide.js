@@ -135,23 +135,75 @@ function releaseOffers(S, offers, status) {
   }
 }
 
+// The constraints and start a new round of offers uses (doPropose).
+function proposeConstraints(S, a) {
+  return hasConstraints(a.constraints) ? a.constraints : ((S.ctx.thread && S.ctx.thread.constraints) || {});
+}
+
+// "None of those work": the next round starts the day after the last offered day.
+function proposeWindowStart(S, a) {
+  if (!a.shiftAfterLast) return null;
+  const starts = threadOffers(S.ctx).map((o) => o.start).sort();
+  if (!starts.length) return null;
+  return DateTime.fromISO(starts[starts.length - 1], { setZone: true }).setZone(employeeOf(S).timezone)
+    .plus({ days: 1 }).startOf('day').toISO();
+}
+
+// A counter-proposal that doesn't fit falls back to a round around its dates.
+function counterFallbackConstraints(a) {
+  return hasConstraints(a.constraints) ? a.constraints : constraintsFromTimes(a.times);
+}
+
+function windowParams(S, extra = {}) {
+  const ctx = S.ctx;
+  const emp = employeeOf(S);
+  return {
+    employee: emp,
+    now: ctx.now,
+    windowDays: emp.search_window_days,
+    widenDays: U.setting(ctx, 'widen_window_days', 7),
+    maxHorizonDays: U.setting(ctx, 'max_horizon_days', 90),
+    ...extra,
+  };
+}
+
+// Every span of days this action may offer or check a slot in. The calendar
+// read must cover all of them, or a slot could be judged free on a partial
+// calendar. A window past the horizon is left out: act() escalates it.
+function calendarSpans(S) {
+  const ctx = S.ctx;
+  const a = S.action || {};
+  const zone = employeeOf(S).timezone;
+  const spans = [];
+  const addWindow = (constraints, windowStart) => {
+    const w = SL.searchWindow(windowParams(S, { constraints, windowStart }));
+    if (!w.beyondHorizon) spans.push([w.first, w.end]);
+  };
+  const addOffer = (o) => spans.push([DateTime.fromISO(o.start, { setZone: true }), DateTime.fromISO(o.end, { setZone: true })]);
+
+  if (a.type === 'start') addWindow(a.create.constraints);
+  if (a.type === 'propose') addWindow(proposeConstraints(S, a), proposeWindowStart(S, a));
+  if (a.type === 'accept_offer') addWindow(proposeConstraints(S, {})); // if taken → new round
+  if (a.type === 'counter_times') {
+    for (const t of a.times) {
+      const day = DateTime.fromISO(t.date, { zone });
+      if (day.isValid) spans.push([day, day.plus({ days: 1 })]);
+    }
+    addWindow(proposeConstraints(S, { constraints: counterFallbackConstraints(a) }));
+  }
+  for (const o of liveThreadOffers(ctx)) addOffer(o);
+  return spans;
+}
+
 function calendarRequest(S) {
   const ctx = S.ctx;
   const emp = employeeOf(S);
   const now = DateTime.fromISO(ctx.now, { setZone: true });
-  // Candidates can start after the last offered day ("none of those work"), so
-  // the calendar read must reach that far plus the full window.
-  let reach = now;
-  for (const o of threadOffers(ctx)) {
-    const d = DateTime.fromISO(o.start, { setZone: true }).plus({ days: 1 });
-    if (d > reach) reach = d;
-  }
-  let to = reach.plus({ days: emp.search_window_days + U.setting(ctx, 'widen_window_days', 7) + 2 });
-  for (const o of liveThreadOffers(ctx)) {
-    const end = DateTime.fromISO(o.end, { setZone: true }).plus({ days: 1 });
-    if (end > to) to = end;
-  }
-  const from = now.minus({ hours: 12 });
+  const spans = calendarSpans(S);
+  let from = spans.length ? DateTime.min(...spans.map((s) => s[0])) : now;
+  let to = spans.length ? DateTime.max(...spans.map((s) => s[1])) : now;
+  from = from.minus({ hours: 12 });
+  to = to.plus({ days: 1 });
   const base = U.setting(ctx, 'graph_base_url', 'https://graph.microsoft.com/v1.0');
   const qs = [
     `startDateTime=${encodeURIComponent(from.toUTC().toISO({ suppressMilliseconds: true }))}`,
@@ -169,19 +221,26 @@ function slotParams(S, busy, extra = {}) {
   const ctx = S.ctx;
   const emp = employeeOf(S);
   const t = threadView(S);
-  return {
-    employee: emp,
-    now: ctx.now,
+  return windowParams(S, {
     busy,
     otherOffers: liveOffers(ctx, emp.id, ctx.thread ? ctx.thread.id : null),
     durationMin: t.duration_min,
     locationType: t.location_type,
     stepMin: U.setting(ctx, 'slot_step_min', 30),
-    windowDays: emp.search_window_days,
-    widenDays: U.setting(ctx, 'widen_window_days', 7),
     count: emp.offers_per_round,
     ...extra,
-  };
+  });
+}
+
+const shortDate = (d) => d.toFormat('ccc LLL d');
+
+// Why no slots were found, for Vic. r is pickSlots' result.
+function noSlotsReason(S, r, fallback) {
+  const h = U.setting(S.ctx, 'max_horizon_days', 90);
+  if (r.note === 'beyond_horizon') {
+    return `The requested dates start ${shortDate(r.window.first)}, more than ${h} days out. I only schedule up to ${h} days ahead`;
+  }
+  return fallback(r.window);
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +263,7 @@ function start(ctx) {
 
   const emp = employeeOf(S);
   const zone = emp.timezone;
-  const table = F.calendarTable(ctx.now, zone, 28);
+  const table = F.calendarTable(ctx.now, zone, U.setting(ctx, 'max_horizon_days', 90));
   const msg = ctx.message;
   const t = ctx.thread;
   let prompt;
@@ -553,14 +612,14 @@ function offerSlots(S, slots, round, purpose) {
 }
 
 function doStart(S, a, busy) {
-  const ctx = S.ctx;
   S.plan.thread.create = a.create;
   S.plan.thread.id = null;
   const emp = employeeOf(S);
   const r = SL.pickSlots(slotParams(S, busy, { constraints: a.create.constraints }));
   S.log.push(`slots: ${r.note} (${r.considered} candidates)`);
   if (!r.slots.length) {
-    return doEscalate(S, { reason: `No open times in the next ${emp.search_window_days + U.setting(ctx, 'widen_window_days', 7)} days fit your calendar rules`, handoff: true });
+    return doEscalate(S, { reason: noSlotsReason(S, r, (w) =>
+      `No open times between ${shortDate(w.first)} and ${shortDate(w.end.minus({ days: 1 }))} fit your calendar rules`), handoff: true });
   }
   S.plan.thread.transitions.push('PROPOSED');
   Object.assign(S.plan.thread.set, { round_count: 1, employee_moved_to_bcc: !!emp.bcc_after_intro });
@@ -570,21 +629,13 @@ function doStart(S, a, busy) {
 function doPropose(S, a, busy) {
   const ctx = S.ctx;
   const t = ctx.thread;
-  const emp = employeeOf(S);
   const maxRounds = U.setting(ctx, 'max_rounds', 4);
   if (t.round_count >= maxRounds && a.reason !== 'followup') {
     return doEscalate(S, { reason: `No agreement after ${t.round_count} rounds of times`, handoff: true });
   }
 
-  const constraints = hasConstraints(a.constraints) ? a.constraints : (t.constraints || {});
-  let windowStart = null;
-  if (a.shiftAfterLast) {
-    const starts = threadOffers(ctx).map((o) => o.start).sort();
-    if (starts.length) {
-      windowStart = DateTime.fromISO(starts[starts.length - 1], { setZone: true }).setZone(emp.timezone)
-        .plus({ days: 1 }).startOf('day').toISO();
-    }
-  }
+  const constraints = proposeConstraints(S, a);
+  const windowStart = proposeWindowStart(S, a);
   // Retiring this thread's live offers frees their slots for the new round.
   const live = liveThreadOffers(ctx);
   const r = SL.pickSlots(slotParams(S, busy, {
@@ -593,7 +644,7 @@ function doPropose(S, a, busy) {
   }));
   S.log.push(`slots: ${r.note} (${r.considered} candidates)`);
   if (!r.slots.length) {
-    return doEscalate(S, { reason: 'I ran out of open times that fit', handoff: true });
+    return doEscalate(S, { reason: noSlotsReason(S, r, () => 'I ran out of open times that fit'), handoff: true });
   }
 
   const extra = a.extraUpdates || [];
@@ -675,7 +726,7 @@ function doCounterTimes(S, a, busy) {
     S.log.push(`counter ${time.date} ${time.time}: ${check.ok ? 'ok' : check.reason}`);
     if (check.ok) return acceptFlow(S, { start: s, end: e, score: check.score }, check.flags);
   }
-  const c = hasConstraints(a.constraints) ? a.constraints : constraintsFromTimes(a.times);
+  const c = counterFallbackConstraints(a);
   return doPropose(S, { reason: 'counter_unavailable', constraints: c || undefined }, busy);
 }
 

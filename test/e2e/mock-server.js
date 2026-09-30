@@ -86,7 +86,7 @@ function createMock({ sarah = 'sarah.johnson@bluzonebio.com' } = {}) {
   // -------------------------------------------------------------- Graph ----
   async function graph(req, res, path, url) {
     const body = await readBody(req);
-    S.requests.push({ method: req.method, path, auth: req.headers.authorization, prefer: req.headers.prefer, body });
+    S.requests.push({ method: req.method, path, query: url.searchParams, auth: req.headers.authorization, prefer: req.headers.prefer, body });
     if (req.headers.authorization !== 'Bearer mock-token') return json(res, 401, { error: { code: 'InvalidAuthenticationToken', message: 'bad token' } });
     for (const [k, code] of Object.entries(S.failNext)) {
       const [m, re] = k.split(' ');

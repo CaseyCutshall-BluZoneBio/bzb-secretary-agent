@@ -161,15 +161,44 @@ function workingWindow(emp, day) {
   };
 }
 
+// The days candidates() walks. It starts at the latest of today, windowStart,
+// and a requested earliest_date (never inside min notice), and runs windowDays
+// (+ widenDays) from there. The calendar read covers the same days
+// (decide.calendarRequest). beyondHorizon: the start is more than
+// maxHorizonDays out (today is day 0), so nothing is offered.
+function searchWindow(p) {
+  const emp = p.employee;
+  const zone = emp.timezone;
+  const now = DateTime.fromISO(p.now, { setZone: true }).setZone(zone);
+  const c = p.constraints || {};
+  let start = now;
+  if (p.windowStart) {
+    const ws = DateTime.fromISO(p.windowStart, { setZone: true }).setZone(zone);
+    if (ws > start) start = ws;
+  }
+  if (c.earliest_date) {
+    const notice = now.plus({ hours: emp.min_notice_hours });
+    const ed = DateTime.fromISO(c.earliest_date, { zone });
+    const s = ed > notice ? ed : notice;
+    if (s > start) start = s;
+  }
+  const first = start.startOf('day');
+  const passDays = p.windowDays || emp.search_window_days;
+  const totalDays = passDays + (p.widenDays || 0);
+  const horizonEnd = p.maxHorizonDays ? now.startOf('day').plus({ days: p.maxHorizonDays }) : null;
+  return { first, passDays, totalDays, end: first.plus({ days: totalDays }),
+           beyondHorizon: !!horizonEnd && first >= horizonEnd };
+}
+
 // All hard-legal candidates in the window (+ widen days), with a pass marker.
 function candidates(p) {
   const P = prepare(p);
   const c = p.constraints || {};
   const step = (p.stepMin || 30) * MIN;
   const earliest = P.now.plus({ hours: P.emp.min_notice_hours });
-  const ws = p.windowStart ? DateTime.fromISO(p.windowStart, { setZone: true }).setZone(P.zone) : P.now;
-  const first = (ws > P.now ? ws : P.now).startOf('day');
-  const totalDays = (p.windowDays || P.emp.search_window_days) + (p.widenDays || 0);
+  const W = searchWindow(p);
+  if (W.beyondHorizon) return [];
+  const { first, totalDays } = W;
   const exclude = new Set((p.excludeStarts || []).map((x) => DateTime.fromISO(x, { setZone: true }).toMillis()));
   const days = (c.days_of_week || []).map(lower).filter((d) => DAY_KEYS.includes(d));
 
@@ -188,7 +217,7 @@ function candidates(p) {
       if (exclude.has(t.toMillis())) continue;
       const cand = evaluate(P, t);
       if (cand) {
-        cand.pass = i < (p.windowDays || P.emp.search_window_days) ? 1 : 2;
+        cand.pass = i < W.passDays ? 1 : 2;
         out.push(cand);
       }
     }
@@ -236,10 +265,13 @@ const distinctDays = (list) => new Set(list.map((c) => c.day)).size;
  *   2. widen the window by widenDays and try again
  *   3. offer fewer (but at least 2) clean slots
  *   4. only then include back-to-back slots, ranked last
- * Returns { slots: [...with option_no], note }.
+ * Returns { slots: [...with option_no], note, window }. note 'beyond_horizon':
+ * the requested window starts past maxHorizonDays, so nothing is offered.
  */
 function pickSlots(p) {
   const n = p.count || p.employee.offers_per_round || 3;
+  const window = searchWindow(p);
+  if (window.beyondHorizon) return { slots: [], note: 'beyond_horizon', considered: 0, window };
   const all = candidates(p);
   const pass1 = all.filter((c) => c.pass === 1);
   const clean1 = pass1.filter((c) => c.clean);
@@ -265,7 +297,7 @@ function pickSlots(p) {
   const slots = chosen.map((c, i) => ({
     option_no: i + 1, start: c.start, end: c.end, score: c.score, flags: c.flags,
   }));
-  return { slots, note, considered: all.length };
+  return { slots, note, considered: all.length, window };
 }
 
 /**
@@ -284,6 +316,9 @@ function checkSlot(p, startIso, endIso, mode = 'propose') {
     const w = workingWindow(P.emp, start.startOf('day'));
     if (!w || start < w.start || end > w.end) return { ok: false, reason: 'outside_working_hours' };
     if (start < P.now.plus({ hours: P.emp.min_notice_hours })) return { ok: false, reason: 'too_soon' };
+    if (p.maxHorizonDays && start >= P.now.startOf('day').plus({ days: p.maxHorizonDays })) {
+      return { ok: false, reason: 'beyond_horizon' };
+    }
   } else if (start < P.now) {
     return { ok: false, reason: 'in_the_past' };
   }
@@ -295,5 +330,5 @@ function checkSlot(p, startIso, endIso, mode = 'propose') {
 
 module.exports = {
   HOLD_CATEGORY, DAY_KEYS, parseGraphTime, busyFromEvents, offersToBlocks,
-  candidates, pickSlots, checkSlot, evaluate, prepare,
+  searchWindow, candidates, pickSlots, checkSlot, evaluate, prepare,
 };

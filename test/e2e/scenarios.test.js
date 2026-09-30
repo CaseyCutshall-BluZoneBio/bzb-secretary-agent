@@ -215,6 +215,30 @@ test('timer: quiet client gets one follow-up with fresh options', async () => {
 });
 
 // -----------------------------------------------------------------------------
+test('a request for "3 weeks from today" is offered in that week, read from the calendar there', async () => {
+  const { DateTime } = require('luxon');
+  const target = DateTime.now().setZone('America/New_York').plus({ weeks: 3 }).startOf('day');
+  const none = { earliest_date: null, latest_date: null, days_of_week: [], time_of_day: 'any' };
+  S.llmOverride = (schema) => (schema === 'trigger' ? JSON.stringify({ is_scheduling_request: true, duration_min: null, location: null,
+    location_detail: null, constraints: { ...none, earliest_date: target.toISODate() }, topic: null }) : undefined);
+  const before = S.requests.length;
+  const trig = mock.deliver({ from: VIC, to: ['ari@tailspin-toys.com'], cc: [SARAH], authAs: 'Internal', subject: 'Ari intro',
+                              body: "Ari, let's talk 3 weeks from today. Sarah will find us a time." });
+  await waitFor('intro to Ari', () => sentTo('ari@tailspin-toys.com')[0]);
+  S.llmOverride = null;
+  const offers = (await db.query(`SELECT lower(o.slot) AS start_at FROM sched.offers o JOIN sched.threads t ON t.id = o.thread_id
+                                  WHERE t.conversation_id = $1`, [trig.conversationId])).rows;
+  assert.equal(offers.length, 3);
+  for (const o of offers) {
+    const d = DateTime.fromJSDate(o.start_at).setZone('America/New_York');
+    assert.ok(d >= target && d < target.plus({ days: 17 }), `offer ${d.toISO()} is in the requested window`);
+  }
+  const read = S.requests.slice(before).find((r) => r.method === 'GET' && /calendarView$/.test(r.path));
+  assert.ok(DateTime.fromISO(read.query.get('startDateTime')) <= target, 'the calendar read starts by the requested day');
+  assert.ok(DateTime.fromISO(read.query.get('endDateTime')) >= target.plus({ days: 17 }), '…and covers the whole window');
+});
+
+// -----------------------------------------------------------------------------
 test('a failing workflow triggers the error workflow, which emails Casey', async () => {
   S.failNext['GET /mailFolders/inbox/messages/delta$'] = 500;
   const alert = await waitFor('failure alert to Casey', () =>

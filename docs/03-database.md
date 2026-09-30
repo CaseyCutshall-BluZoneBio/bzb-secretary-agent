@@ -35,7 +35,11 @@ UPDATE sched.settings SET value = '72' WHERE key = 'client_followup_after_hours'
 SELECT sched.set_mode('shadow');                                        -- mode has its own guarded setter
 ```
 
-Workflows read settings on every run, so changes apply immediately.
+Workflows read settings on every run, so changes apply immediately. A setting missing from the table falls back to the default below, so a key added in a later version works on an older install before you insert it, for example:
+
+```sql
+INSERT INTO sched.settings (key, value, note) VALUES ('max_horizon_days', '90', 'Furthest ahead a requested window may start') ON CONFLICT (key) DO NOTHING;
+```
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -60,6 +64,7 @@ Workflows read settings on every run, so changes apply immediately.
 | `hold_ttl_hours` | 48 | Holds are released after this even if the client hasn't answered |
 | `slot_step_min` | 30 | Candidate start-time grid |
 | `widen_window_days` | 7 | Extra look-ahead when clean slots are scarce |
+| `max_horizon_days` | 90 | How far ahead a requested window may start (today is day 0). A request that starts later goes to the employee instead of being offered nearer dates. Also the length of the date table the model maps "the week of the 26th" against |
 | `outbox_max_attempts` | 3 | Graph retries before an item fails and the thread escalates |
 | `outbox_max_age_hours` | 24 | Client-facing mail unsent after this long is cancelled, not sent late |
 | `poller_lease_seconds` | 90 | After a poller crash, the next run can start after this long |

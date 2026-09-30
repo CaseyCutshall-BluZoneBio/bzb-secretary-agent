@@ -180,3 +180,40 @@ test('offers mix times of day instead of the same hour every day', () => {
   assert.ok(hours.size >= 2, `all at ${[...hours]}`);
   assert.ok(r.slots.every((s) => s.score === 100), 'variety never costs score');
 });
+
+test('earliest_date moves the window: it starts there and runs the full window from there', () => {
+  // Mon Oct 5 + 3 weeks = Mon Oct 26: far past the 10+7 day default window
+  const c = { earliest_date: '2026-10-26', latest_date: null, days_of_week: [], time_of_day: 'any' };
+  const w = SL.searchWindow(base({ constraints: c }));
+  assert.equal(w.first.toISODate(), '2026-10-26');
+  assert.equal(w.end.toISODate(), '2026-11-12', '10 + 7 days counted from the 26th');
+  const r = SL.pickSlots(base({ constraints: c }));
+  assert.equal(r.note, 'clean');
+  assert.equal(r.slots.length, 3);
+  for (const s of r.slots) assert.ok(local(s.start).toISODate() >= '2026-10-26' && local(s.start).toISODate() <= '2026-10-30');
+  // an earliest_date inside min notice starts at the notice, not before it
+  const soon = SL.searchWindow(base({ constraints: { ...c, earliest_date: '2026-10-05' } }));
+  assert.equal(soon.first.toISODate(), '2026-10-06');
+  // no earliest_date: unchanged, the window starts today
+  assert.equal(SL.searchWindow(base()).first.toISODate(), '2026-10-05');
+});
+
+test('earliest_date = latest_date offers only that day', () => {
+  const r = SL.pickSlots(base({ constraints: { earliest_date: '2026-11-18', latest_date: '2026-11-18', days_of_week: [], time_of_day: 'any' } }));
+  assert.equal(r.slots.length, 3);
+  for (const s of r.slots) assert.equal(local(s.start).toISODate(), '2026-11-18');
+});
+
+test('a window starting past max_horizon_days offers nothing; checkSlot refuses past the horizon', () => {
+  const c = (d) => ({ earliest_date: d, latest_date: null, days_of_week: [], time_of_day: 'any' });
+  // today is day 0: with a 90-day horizon, Jan 2 (day 89) is the last start day
+  const inside = SL.pickSlots(base({ maxHorizonDays: 90, constraints: c('2027-01-01') }));
+  assert.ok(inside.slots.length > 0);
+  const out = SL.pickSlots(base({ maxHorizonDays: 90, constraints: c('2027-01-03') }));
+  assert.equal(out.note, 'beyond_horizon');
+  assert.deepEqual(out.slots, []);
+  assert.equal(out.window.first.toISODate(), '2027-01-03');
+  const p = base({ maxHorizonDays: 30 });
+  assert.equal(SL.checkSlot(p, '2026-11-05T15:00:00Z', '2026-11-05T15:30:00Z', 'propose').reason, 'beyond_horizon');
+  assert.ok(SL.checkSlot(p, '2026-11-03T15:00:00Z', '2026-11-03T15:30:00Z', 'propose').ok);
+});

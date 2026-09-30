@@ -131,6 +131,8 @@ Nothing in the Processor talks to Graph except the read-only calendar lookup. Ev
 | Day already has 4+ meetings | −15 |
 | Outside preferred hours | −10 |
 
+**Where it looks.** The window starts today, or on the requested `earliest_date` if there is one (never inside `min_notice_hours`). It then runs `search_window_days`, plus `widen_window_days` if needed, from that start. So "3 weeks from today" or a client's "the week of the 26th" is searched in that week, and Vic's calendar is read across exactly the days the decision can use. A request that starts more than `max_horizon_days` out (default 90) goes to Vic with that reason; Sarah never quietly offers nearer dates instead. A specific time the client proposes is checked against the calendar for that day, and refused past the horizon the same way.
+
 **Choosing the three.** Clean slots, one per day, mixing morning and afternoon. Option numbers are unique per thread: round 2 offers 4–6, and so on. If a client answers an older email's "option 2", that exact time is re-checked and taken if still free.
 
 If there aren't enough clean slots:

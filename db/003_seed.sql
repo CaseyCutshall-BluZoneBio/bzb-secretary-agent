@@ -44,6 +44,7 @@ INSERT INTO settings (key, value, note) VALUES
   ('hold_ttl_hours',              '48', 'Holds are released after this even if the client hasn''t answered.'),
   ('slot_step_min',               '30', 'Candidate start times are on this grid.'),
   ('widen_window_days',           '7',  'If too few clean slots, look this many extra days ahead once.'),
+  ('max_horizon_days',            '90', 'Furthest ahead (days from today) a requested window may start; later ones go to the employee. Also the length of the date table the model reads.'),
   ('outbox_max_attempts',         '3',  'Graph call retries before the item fails and the thread escalates.'),
   ('outbox_max_age_hours',        '24', 'Client-facing mail unsent after this long is cancelled, not sent late.'),
   ('poller_lease_seconds',        '90', 'If a poller run crashes, the next one can start after this long.'),

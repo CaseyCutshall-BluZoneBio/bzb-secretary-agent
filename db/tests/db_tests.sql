@@ -39,6 +39,9 @@ SELECT pg_temp.ok('functions + triggers work under the default search_path (as n
 ROLLBACK TO SAVEPOINT default_path;
 SET LOCAL search_path = sched, public;
 
+SELECT pg_temp.ok('seed: max_horizon_days defaults to 90',
+  setting_int('max_horizon_days') = 90);
+
 -- Isolate from whatever the real settings are
 UPDATE settings SET value = '"sarah.johnson@bluzonebio.com"' WHERE key = 'sarah_upn';
 UPDATE settings SET value = '"casey@bluzonebio.com"' WHERE key = 'alert_address';

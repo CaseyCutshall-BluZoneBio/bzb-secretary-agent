@@ -1,19 +1,19 @@
 # Testing
 
-Three layers. All of them passed on 2026-09-30 against n8n 2.41.4, Node 24, and Postgres 16.
+Three layers. All of them passed on 2026-09-30 against n8n 2.41.4, Node 24, and Postgres 14 (earlier runs: Postgres 16).
 
-## Unit tests: `npm test` (71 tests, ~1 s)
+## Unit tests: `npm test` (80 tests, ~1 s)
 
 Plain Node (≥ 20). No n8n, database, or network.
 
 | File | Covers |
 |---|---|
-| `test/unit/slots.test.js` | Hard rules (busy, gaps, travel buffer, day cap, notice, working hours), soft scoring, back-to-back fallback order, window widening, all-day/OOF handling, holds not counted, cross-thread offers blocking, constraints, time-of-day mix, re-check modes |
-| `test/unit/decide.test.js` | Every processor path end to end with canned model/calendar responses: trigger → intro; accept; taken slot; counter-proposals (free / busy / other timezone / back-to-back); reject-all; max rounds; question hand-off; delegation to an EA; unparseable replies; Vic YES / NO / unclear / conflict; take-over; follow-up, stall and reminder timers; recipient guard |
+| `test/unit/slots.test.js` | Hard rules (busy, gaps, travel buffer, day cap, notice, working hours), soft scoring, back-to-back fallback order, window widening, all-day/OOF handling, holds not counted, cross-thread offers blocking, constraints, requested windows past the default look-ahead, the horizon, time-of-day mix, re-check modes |
+| `test/unit/decide.test.js` | Every processor path end to end with canned model/calendar responses: trigger → intro; accept; taken slot; counter-proposals (free / busy / other timezone / back-to-back); reject-all; max rounds; question hand-off; delegation to an EA; unparseable replies; Vic YES / NO / unclear / conflict; take-over; follow-up, stall and reminder timers; recipient guard; far-out requests ("3 weeks from today", "week of …", a single day, past the horizon) and the calendar read covering them |
 | `test/unit/parts.test.js` | Model-output parser (`<think>`, fences, echoed schemas), draft validator (every forbidden fact type, placeholder rules, every template passes), slot formatting incl. DST, routing and spoof/OOO guards, Graph request shapes, retry classification, poller normalization |
 | `test/unit/bundle.test.js` | The generated bundle runs in a sandbox with only Luxon globals (as in an n8n Code node) |
 
-## Database tests: `npm run test:db` (83 tests)
+## Database tests: `npm run test:db` (84 tests)
 
 ```bash
 PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres npm run test:db
@@ -32,10 +32,11 @@ This creates `sched_agent_test`, applies all migrations, and runs `db/tests/db_t
 - timers and the stuck-email sweeper
 - the state machine
 - `search_path` pinning (n8n connects with the default path)
+- seeded defaults the code relies on (`max_horizon_days`)
 
 You can run the test file against the production database too. It never commits.
 
-## End-to-end: `npm run test:e2e` (8 scenarios, ~3–4 min)
+## End-to-end: `npm run test:e2e` (9 scenarios, ~3–4 min)
 
 This runs **the real generated workflows in a real n8n** against:
 
@@ -63,6 +64,7 @@ Set `E2E_DUMP=/tmp/sent.txt` to get a readable copy of every email Sarah sent.
 | model garbage | Unparseable classification → `NEEDS_VIC`, Vic told, client not emailed |
 | Graph 503 | Retried; the email goes out exactly once |
 | follow-up timer | Quiet client gets one follow-up with a fresh round |
+| far-out request | "3 weeks from today" is offered in that week, and the calendarView read covers the whole window |
 | error workflow | A failing Poller run emails Casey via Sarah's mailbox; the next run recovers |
 | clean finish | Every inbound email reached a final disposition; no failed outbox items |
 
