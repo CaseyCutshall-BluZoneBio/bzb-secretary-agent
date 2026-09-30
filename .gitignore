@@ -1,0 +1,5 @@
+node_modules/
+.env
+*.local.json
+n8n/credentials.json
+.DS_Store

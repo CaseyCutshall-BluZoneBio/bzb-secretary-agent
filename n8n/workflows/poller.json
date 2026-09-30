@@ -1,0 +1,535 @@
+{
+  "id": "SarahPoller00001",
+  "name": "Sarah · Poller",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "22cdb9dd-fb8d-4a77-a7d2-c33efb7aee9f",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT CASE WHEN sched.setting_text('mode') IN ('dry_run', 'shadow', 'live')\n            THEN sched.try_lease('poller', coalesce(sched.setting_int('poller_lease_seconds'), 90)) ELSE false END AS got,\n       (SELECT jsonb_object_agg(key, value) FROM sched.settings WHERE key NOT LIKE 'lease:%') AS settings;",
+        "options": {}
+      },
+      "id": "e7ecb91e-224f-437f-a6f5-85361f00e3b9",
+      "name": "Mode + lease",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SchedPostgres001",
+          "name": "Sarah · Postgres (sched_agent)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9689cc62-c186-4399-a652-38c36eebc66e",
+              "leftValue": "={{ $json.got === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "c9c51845-9096-4a4d-af50-d7272804fa0e",
+      "name": "Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ---- bundled from src/ by scripts/build-workflows.js — edit src/, not this ----\nconst lib = { \"poller\": (function () {\n  const __mods = {\n  \"poller.js\": [function (module, exports, require) {\n'use strict';\n// Poller helpers: Graph delta over Sarah's Inbox, and message normalization.\nconst { lower } = require('./util');\n\nconst enc = encodeURIComponent;\n\nfunction deltaUrl(settings) {\n  if (settings.poller_delta_link) return settings.poller_delta_link;\n  return `${settings.graph_base_url}/users/${enc(settings.sarah_upn)}/mailFolders/inbox/messages/delta`\n    + `?$select=${enc('id,receivedDateTime,isDraft')}`;\n}\n\n/** Split a delta page into message ids + the cursor to store for next time. */\nfunction splitDelta(resp) {\n  const values = (resp && resp.value) || [];\n  const ids = values.filter((v) => v && v.id && !v['@removed'] && !v.isDraft).map((v) => v.id);\n  const cursor = (resp && (resp['@odata.nextLink'] || resp['@odata.deltaLink'])) || null;\n  return { ids: [...new Set(ids)], cursor, more: !!(resp && resp['@odata.nextLink']) };\n}\n\nfunction messageUrl(settings, id) {\n  const select = 'id,internetMessageId,conversationId,subject,from,sender,toRecipients,ccRecipients,'\n    + 'receivedDateTime,isDraft,uniqueBody,body,internetMessageHeaders';\n  return `${settings.graph_base_url}/users/${enc(settings.sarah_upn)}/messages/${enc(id)}?$select=${enc(select)}`;\n}\n\nfunction header(headers, name) {\n  const h = (headers || []).find((x) => lower(x.name) === lower(name));\n  return h ? String(h.value) : null;\n}\n\n/** Graph message → ingest_message() payload. */\nfunction normalizeMessage(m) {\n  const addr = (r) => lower(r && r.emailAddress && r.emailAddress.address);\n  const names = {};\n  for (const r of [...(m.toRecipients || []), ...(m.ccRecipients || [])]) {\n    const a = addr(r);\n    if (a) names[a] = (r.emailAddress && r.emailAddress.name && r.emailAddress.name !== r.emailAddress.address) ? r.emailAddress.name : '';\n  }\n  const hs = m.internetMessageHeaders || [];\n  const body = (m.uniqueBody && m.uniqueBody.content) || (m.body && m.body.content) || '';\n  return {\n    internet_message_id: m.internetMessageId || null,\n    graph_message_id: m.id,\n    conversation_id: m.conversationId || null,\n    from_address: addr(m.from) || addr(m.sender),\n    from_name: (m.from && m.from.emailAddress && m.from.emailAddress.name) || '',\n    to_addresses: (m.toRecipients || []).map(addr).filter(Boolean),\n    cc_addresses: (m.ccRecipients || []).map(addr).filter(Boolean),\n    recipient_names: names,\n    subject: m.subject || '',\n    body_text: String(body).replace(/\\r\\n/g, '\\n').slice(0, 8000),\n    headers: {\n      auth_as: header(hs, 'X-MS-Exchange-Organization-AuthAs'),\n      auto_submitted: header(hs, 'Auto-Submitted'),\n      precedence: header(hs, 'Precedence'),\n      x_autoreply: header(hs, 'X-Autoreply'),\n      x_autorespond: header(hs, 'X-Autorespond'),\n      headers_present: hs.length > 0,\n    },\n    event_at: m.receivedDateTime,\n    is_draft: !!m.isDraft,\n  };\n}\n\nmodule.exports = { deltaUrl, splitDelta, messageUrl, normalizeMessage };\n\n}, {\"./util\":\"util.js\"}],\n  \"util.js\": [function (module, exports, require) {\n'use strict';\n// Small, dependency-free helpers shared by every module.\n\nconst lower = (s) => (s == null ? '' : String(s).trim().toLowerCase());\n\nconst unique = (arr) => [...new Set((arr || []).filter(Boolean))];\n\nfunction domainOf(address) {\n  const a = lower(address);\n  const at = a.lastIndexOf('@');\n  return at === -1 ? '' : a.slice(at + 1);\n}\n\nfunction isInternal(address, internalDomains) {\n  const d = domainOf(address);\n  return (internalDomains || []).some((x) => lower(x) === d);\n}\n\nfunction setting(ctx, key, fallback) {\n  const s = ctx && ctx.settings ? ctx.settings[key] : undefined;\n  return s === undefined || s === null ? fallback : s;\n}\n\nfunction htmlEscape(s) {\n  return String(s == null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Plain text → simple HTML paragraphs, preserving line breaks.\nfunction textToHtml(text) {\n  return String(text || '')\n    .split(/\\n{2,}/)\n    .map((p) => `<p>${htmlEscape(p).replace(/\\n/g, '<br>')}</p>`)\n    .join('\\n');\n}\n\n// \"Dana Whitfield\" → \"Dana\"; falls back to the local part of the address.\nfunction firstName(name, address) {\n  const n = String(name || '').trim();\n  if (n && !n.includes('@')) {\n    const clean = n.replace(/^(dr|mr|mrs|ms|prof)\\.?\\s+/i, '');\n    const first = clean.split(/[\\s,]+/)[0];\n    if (first && /^[\\p{L}'-]+$/u.test(first)) return first;\n  }\n  const local = lower(address).split('@')[0] || '';\n  const part = local.split(/[._-]/)[0] || local;\n  return part ? part.charAt(0).toUpperCase() + part.slice(1) : '';\n}\n\nfunction joinNames(names) {\n  const n = (names || []).filter(Boolean);\n  if (n.length <= 1) return n[0] || '';\n  if (n.length === 2) return `${n[0]} and ${n[1]}`;\n  return `${n.slice(0, -1).join(', ')}, and ${n[n.length - 1]}`;\n}\n\n// Display names come from email headers, i.e. from the client. Keep only what a\n// name looks like (letters, spaces, . ' -), max 60 chars, so a crafted name\n// can't smuggle instructions into prompts or emails.\nfunction sanitizeName(name) {\n  const s = String(name || '').normalize('NFC').replace(/[^\\p{L}\\p{M} .'-]/gu, ' ').replace(/\\s+/g, ' ').trim();\n  return s.slice(0, 60).trim();\n}\n\nmodule.exports = { lower, unique, domainOf, isInternal, setting, htmlEscape, textToHtml, firstName, joinNames, sanitizeName };\n\n}, {}]\n  };\n  const __cache = {};\n  function __load(id) {\n    if (__cache[id]) return __cache[id].exports;\n    const module = { exports: {} };\n    __cache[id] = module;\n    const [fn, deps] = __mods[id];\n    fn(module, module.exports, (name) => {\n      if (deps[name]) return __load(deps[name]);\n      throw new Error('module not bundled: ' + name);\n    });\n    return module.exports;\n  }\n  return __load(\"poller.js\");\n})() };\n// ---- end bundle ----\n\n// ---- node logic ----\nreturn { json: { url: lib.poller.deltaUrl($json.settings), settings: $json.settings } };\n"
+      },
+      "id": "cdd651c3-8289-4380-a899-3f6ee75f9367",
+      "name": "Delta URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "odata.maxpagesize=50"
+            }
+          ]
+        }
+      },
+      "id": "d227313e-eda3-4a02-a8d5-abc173e163db",
+      "name": "Graph: inbox delta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "SchedGraphApp001",
+          "name": "Sarah · Microsoft Graph (app-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ---- bundled from src/ by scripts/build-workflows.js — edit src/, not this ----\nconst lib = { \"poller\": (function () {\n  const __mods = {\n  \"poller.js\": [function (module, exports, require) {\n'use strict';\n// Poller helpers: Graph delta over Sarah's Inbox, and message normalization.\nconst { lower } = require('./util');\n\nconst enc = encodeURIComponent;\n\nfunction deltaUrl(settings) {\n  if (settings.poller_delta_link) return settings.poller_delta_link;\n  return `${settings.graph_base_url}/users/${enc(settings.sarah_upn)}/mailFolders/inbox/messages/delta`\n    + `?$select=${enc('id,receivedDateTime,isDraft')}`;\n}\n\n/** Split a delta page into message ids + the cursor to store for next time. */\nfunction splitDelta(resp) {\n  const values = (resp && resp.value) || [];\n  const ids = values.filter((v) => v && v.id && !v['@removed'] && !v.isDraft).map((v) => v.id);\n  const cursor = (resp && (resp['@odata.nextLink'] || resp['@odata.deltaLink'])) || null;\n  return { ids: [...new Set(ids)], cursor, more: !!(resp && resp['@odata.nextLink']) };\n}\n\nfunction messageUrl(settings, id) {\n  const select = 'id,internetMessageId,conversationId,subject,from,sender,toRecipients,ccRecipients,'\n    + 'receivedDateTime,isDraft,uniqueBody,body,internetMessageHeaders';\n  return `${settings.graph_base_url}/users/${enc(settings.sarah_upn)}/messages/${enc(id)}?$select=${enc(select)}`;\n}\n\nfunction header(headers, name) {\n  const h = (headers || []).find((x) => lower(x.name) === lower(name));\n  return h ? String(h.value) : null;\n}\n\n/** Graph message → ingest_message() payload. */\nfunction normalizeMessage(m) {\n  const addr = (r) => lower(r && r.emailAddress && r.emailAddress.address);\n  const names = {};\n  for (const r of [...(m.toRecipients || []), ...(m.ccRecipients || [])]) {\n    const a = addr(r);\n    if (a) names[a] = (r.emailAddress && r.emailAddress.name && r.emailAddress.name !== r.emailAddress.address) ? r.emailAddress.name : '';\n  }\n  const hs = m.internetMessageHeaders || [];\n  const body = (m.uniqueBody && m.uniqueBody.content) || (m.body && m.body.content) || '';\n  return {\n    internet_message_id: m.internetMessageId || null,\n    graph_message_id: m.id,\n    conversation_id: m.conversationId || null,\n    from_address: addr(m.from) || addr(m.sender),\n    from_name: (m.from && m.from.emailAddress && m.from.emailAddress.name) || '',\n    to_addresses: (m.toRecipients || []).map(addr).filter(Boolean),\n    cc_addresses: (m.ccRecipients || []).map(addr).filter(Boolean),\n    recipient_names: names,\n    subject: m.subject || '',\n    body_text: String(body).replace(/\\r\\n/g, '\\n').slice(0, 8000),\n    headers: {\n      auth_as: header(hs, 'X-MS-Exchange-Organization-AuthAs'),\n      auto_submitted: header(hs, 'Auto-Submitted'),\n      precedence: header(hs, 'Precedence'),\n      x_autoreply: header(hs, 'X-Autoreply'),\n      x_autorespond: header(hs, 'X-Autorespond'),\n      headers_present: hs.length > 0,\n    },\n    event_at: m.receivedDateTime,\n    is_draft: !!m.isDraft,\n  };\n}\n\nmodule.exports = { deltaUrl, splitDelta, messageUrl, normalizeMessage };\n\n}, {\"./util\":\"util.js\"}],\n  \"util.js\": [function (module, exports, require) {\n'use strict';\n// Small, dependency-free helpers shared by every module.\n\nconst lower = (s) => (s == null ? '' : String(s).trim().toLowerCase());\n\nconst unique = (arr) => [...new Set((arr || []).filter(Boolean))];\n\nfunction domainOf(address) {\n  const a = lower(address);\n  const at = a.lastIndexOf('@');\n  return at === -1 ? '' : a.slice(at + 1);\n}\n\nfunction isInternal(address, internalDomains) {\n  const d = domainOf(address);\n  return (internalDomains || []).some((x) => lower(x) === d);\n}\n\nfunction setting(ctx, key, fallback) {\n  const s = ctx && ctx.settings ? ctx.settings[key] : undefined;\n  return s === undefined || s === null ? fallback : s;\n}\n\nfunction htmlEscape(s) {\n  return String(s == null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Plain text → simple HTML paragraphs, preserving line breaks.\nfunction textToHtml(text) {\n  return String(text || '')\n    .split(/\\n{2,}/)\n    .map((p) => `<p>${htmlEscape(p).replace(/\\n/g, '<br>')}</p>`)\n    .join('\\n');\n}\n\n// \"Dana Whitfield\" → \"Dana\"; falls back to the local part of the address.\nfunction firstName(name, address) {\n  const n = String(name || '').trim();\n  if (n && !n.includes('@')) {\n    const clean = n.replace(/^(dr|mr|mrs|ms|prof)\\.?\\s+/i, '');\n    const first = clean.split(/[\\s,]+/)[0];\n    if (first && /^[\\p{L}'-]+$/u.test(first)) return first;\n  }\n  const local = lower(address).split('@')[0] || '';\n  const part = local.split(/[._-]/)[0] || local;\n  return part ? part.charAt(0).toUpperCase() + part.slice(1) : '';\n}\n\nfunction joinNames(names) {\n  const n = (names || []).filter(Boolean);\n  if (n.length <= 1) return n[0] || '';\n  if (n.length === 2) return `${n[0]} and ${n[1]}`;\n  return `${n.slice(0, -1).join(', ')}, and ${n[n.length - 1]}`;\n}\n\n// Display names come from email headers, i.e. from the client. Keep only what a\n// name looks like (letters, spaces, . ' -), max 60 chars, so a crafted name\n// can't smuggle instructions into prompts or emails.\nfunction sanitizeName(name) {\n  const s = String(name || '').normalize('NFC').replace(/[^\\p{L}\\p{M} .'-]/gu, ' ').replace(/\\s+/g, ' ').trim();\n  return s.slice(0, 60).trim();\n}\n\nmodule.exports = { lower, unique, domainOf, isInternal, setting, htmlEscape, textToHtml, firstName, joinNames, sanitizeName };\n\n}, {}]\n  };\n  const __cache = {};\n  function __load(id) {\n    if (__cache[id]) return __cache[id].exports;\n    const module = { exports: {} };\n    __cache[id] = module;\n    const [fn, deps] = __mods[id];\n    fn(module, module.exports, (name) => {\n      if (deps[name]) return __load(deps[name]);\n      throw new Error('module not bundled: ' + name);\n    });\n    return module.exports;\n  }\n  return __load(\"poller.js\");\n})() };\n// ---- end bundle ----\n\n// ---- node logic ----\nconst r = $json;\nconst settings = $('Delta URL').item.json.settings;\nif (r.statusCode === 410) {\n  // Delta token expired: resync from scratch (processing_start_at guards old mail).\n  return { json: { ok: true, reset: true, cursor: null, ids: [], settings } };\n}\nif (r.error || r.statusCode < 200 || r.statusCode >= 300) {\n  throw new Error('Graph delta failed: ' + JSON.stringify(r.error || r.body).slice(0, 500));\n}\nconst s = lib.poller.splitDelta(r.body);\nreturn { json: { ok: true, cursor: s.cursor, ids: s.ids, more: s.more, settings } };\n"
+      },
+      "id": "8e172cec-e65f-4353-ae64-baf6ef3e8e5e",
+      "name": "Split",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ---- bundled from src/ by scripts/build-workflows.js — edit src/, not this ----\nconst lib = { \"poller\": (function () {\n  const __mods = {\n  \"poller.js\": [function (module, exports, require) {\n'use strict';\n// Poller helpers: Graph delta over Sarah's Inbox, and message normalization.\nconst { lower } = require('./util');\n\nconst enc = encodeURIComponent;\n\nfunction deltaUrl(settings) {\n  if (settings.poller_delta_link) return settings.poller_delta_link;\n  return `${settings.graph_base_url}/users/${enc(settings.sarah_upn)}/mailFolders/inbox/messages/delta`\n    + `?$select=${enc('id,receivedDateTime,isDraft')}`;\n}\n\n/** Split a delta page into message ids + the cursor to store for next time. */\nfunction splitDelta(resp) {\n  const values = (resp && resp.value) || [];\n  const ids = values.filter((v) => v && v.id && !v['@removed'] && !v.isDraft).map((v) => v.id);\n  const cursor = (resp && (resp['@odata.nextLink'] || resp['@odata.deltaLink'])) || null;\n  return { ids: [...new Set(ids)], cursor, more: !!(resp && resp['@odata.nextLink']) };\n}\n\nfunction messageUrl(settings, id) {\n  const select = 'id,internetMessageId,conversationId,subject,from,sender,toRecipients,ccRecipients,'\n    + 'receivedDateTime,isDraft,uniqueBody,body,internetMessageHeaders';\n  return `${settings.graph_base_url}/users/${enc(settings.sarah_upn)}/messages/${enc(id)}?$select=${enc(select)}`;\n}\n\nfunction header(headers, name) {\n  const h = (headers || []).find((x) => lower(x.name) === lower(name));\n  return h ? String(h.value) : null;\n}\n\n/** Graph message → ingest_message() payload. */\nfunction normalizeMessage(m) {\n  const addr = (r) => lower(r && r.emailAddress && r.emailAddress.address);\n  const names = {};\n  for (const r of [...(m.toRecipients || []), ...(m.ccRecipients || [])]) {\n    const a = addr(r);\n    if (a) names[a] = (r.emailAddress && r.emailAddress.name && r.emailAddress.name !== r.emailAddress.address) ? r.emailAddress.name : '';\n  }\n  const hs = m.internetMessageHeaders || [];\n  const body = (m.uniqueBody && m.uniqueBody.content) || (m.body && m.body.content) || '';\n  return {\n    internet_message_id: m.internetMessageId || null,\n    graph_message_id: m.id,\n    conversation_id: m.conversationId || null,\n    from_address: addr(m.from) || addr(m.sender),\n    from_name: (m.from && m.from.emailAddress && m.from.emailAddress.name) || '',\n    to_addresses: (m.toRecipients || []).map(addr).filter(Boolean),\n    cc_addresses: (m.ccRecipients || []).map(addr).filter(Boolean),\n    recipient_names: names,\n    subject: m.subject || '',\n    body_text: String(body).replace(/\\r\\n/g, '\\n').slice(0, 8000),\n    headers: {\n      auth_as: header(hs, 'X-MS-Exchange-Organization-AuthAs'),\n      auto_submitted: header(hs, 'Auto-Submitted'),\n      precedence: header(hs, 'Precedence'),\n      x_autoreply: header(hs, 'X-Autoreply'),\n      x_autorespond: header(hs, 'X-Autorespond'),\n      headers_present: hs.length > 0,\n    },\n    event_at: m.receivedDateTime,\n    is_draft: !!m.isDraft,\n  };\n}\n\nmodule.exports = { deltaUrl, splitDelta, messageUrl, normalizeMessage };\n\n}, {\"./util\":\"util.js\"}],\n  \"util.js\": [function (module, exports, require) {\n'use strict';\n// Small, dependency-free helpers shared by every module.\n\nconst lower = (s) => (s == null ? '' : String(s).trim().toLowerCase());\n\nconst unique = (arr) => [...new Set((arr || []).filter(Boolean))];\n\nfunction domainOf(address) {\n  const a = lower(address);\n  const at = a.lastIndexOf('@');\n  return at === -1 ? '' : a.slice(at + 1);\n}\n\nfunction isInternal(address, internalDomains) {\n  const d = domainOf(address);\n  return (internalDomains || []).some((x) => lower(x) === d);\n}\n\nfunction setting(ctx, key, fallback) {\n  const s = ctx && ctx.settings ? ctx.settings[key] : undefined;\n  return s === undefined || s === null ? fallback : s;\n}\n\nfunction htmlEscape(s) {\n  return String(s == null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Plain text → simple HTML paragraphs, preserving line breaks.\nfunction textToHtml(text) {\n  return String(text || '')\n    .split(/\\n{2,}/)\n    .map((p) => `<p>${htmlEscape(p).replace(/\\n/g, '<br>')}</p>`)\n    .join('\\n');\n}\n\n// \"Dana Whitfield\" → \"Dana\"; falls back to the local part of the address.\nfunction firstName(name, address) {\n  const n = String(name || '').trim();\n  if (n && !n.includes('@')) {\n    const clean = n.replace(/^(dr|mr|mrs|ms|prof)\\.?\\s+/i, '');\n    const first = clean.split(/[\\s,]+/)[0];\n    if (first && /^[\\p{L}'-]+$/u.test(first)) return first;\n  }\n  const local = lower(address).split('@')[0] || '';\n  const part = local.split(/[._-]/)[0] || local;\n  return part ? part.charAt(0).toUpperCase() + part.slice(1) : '';\n}\n\nfunction joinNames(names) {\n  const n = (names || []).filter(Boolean);\n  if (n.length <= 1) return n[0] || '';\n  if (n.length === 2) return `${n[0]} and ${n[1]}`;\n  return `${n.slice(0, -1).join(', ')}, and ${n[n.length - 1]}`;\n}\n\n// Display names come from email headers, i.e. from the client. Keep only what a\n// name looks like (letters, spaces, . ' -), max 60 chars, so a crafted name\n// can't smuggle instructions into prompts or emails.\nfunction sanitizeName(name) {\n  const s = String(name || '').normalize('NFC').replace(/[^\\p{L}\\p{M} .'-]/gu, ' ').replace(/\\s+/g, ' ').trim();\n  return s.slice(0, 60).trim();\n}\n\nmodule.exports = { lower, unique, domainOf, isInternal, setting, htmlEscape, textToHtml, firstName, joinNames, sanitizeName };\n\n}, {}]\n  };\n  const __cache = {};\n  function __load(id) {\n    if (__cache[id]) return __cache[id].exports;\n    const module = { exports: {} };\n    __cache[id] = module;\n    const [fn, deps] = __mods[id];\n    fn(module, module.exports, (name) => {\n      if (deps[name]) return __load(deps[name]);\n      throw new Error('module not bundled: ' + name);\n    });\n    return module.exports;\n  }\n  return __load(\"poller.js\");\n})() };\n// ---- end bundle ----\n\n// ---- node logic ----\nconst out = [];\nfor (const item of $input.all()) {\n  for (const id of item.json.ids) out.push({ json: { id, url: lib.poller.messageUrl(item.json.settings, id) } });\n}\nreturn out;\n"
+      },
+      "id": "3b1f6043-b26b-4e3d-a700-06562f961c85",
+      "name": "Fan out",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "outlook.body-content-type=\"text\""
+            }
+          ]
+        }
+      },
+      "id": "42a801ad-d581-457f-ab8c-256f3513f65a",
+      "name": "Graph: get message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        180
+      ],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "SchedGraphApp001",
+          "name": "Sarah · Microsoft Graph (app-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ---- bundled from src/ by scripts/build-workflows.js — edit src/, not this ----\nconst lib = { \"poller\": (function () {\n  const __mods = {\n  \"poller.js\": [function (module, exports, require) {\n'use strict';\n// Poller helpers: Graph delta over Sarah's Inbox, and message normalization.\nconst { lower } = require('./util');\n\nconst enc = encodeURIComponent;\n\nfunction deltaUrl(settings) {\n  if (settings.poller_delta_link) return settings.poller_delta_link;\n  return `${settings.graph_base_url}/users/${enc(settings.sarah_upn)}/mailFolders/inbox/messages/delta`\n    + `?$select=${enc('id,receivedDateTime,isDraft')}`;\n}\n\n/** Split a delta page into message ids + the cursor to store for next time. */\nfunction splitDelta(resp) {\n  const values = (resp && resp.value) || [];\n  const ids = values.filter((v) => v && v.id && !v['@removed'] && !v.isDraft).map((v) => v.id);\n  const cursor = (resp && (resp['@odata.nextLink'] || resp['@odata.deltaLink'])) || null;\n  return { ids: [...new Set(ids)], cursor, more: !!(resp && resp['@odata.nextLink']) };\n}\n\nfunction messageUrl(settings, id) {\n  const select = 'id,internetMessageId,conversationId,subject,from,sender,toRecipients,ccRecipients,'\n    + 'receivedDateTime,isDraft,uniqueBody,body,internetMessageHeaders';\n  return `${settings.graph_base_url}/users/${enc(settings.sarah_upn)}/messages/${enc(id)}?$select=${enc(select)}`;\n}\n\nfunction header(headers, name) {\n  const h = (headers || []).find((x) => lower(x.name) === lower(name));\n  return h ? String(h.value) : null;\n}\n\n/** Graph message → ingest_message() payload. */\nfunction normalizeMessage(m) {\n  const addr = (r) => lower(r && r.emailAddress && r.emailAddress.address);\n  const names = {};\n  for (const r of [...(m.toRecipients || []), ...(m.ccRecipients || [])]) {\n    const a = addr(r);\n    if (a) names[a] = (r.emailAddress && r.emailAddress.name && r.emailAddress.name !== r.emailAddress.address) ? r.emailAddress.name : '';\n  }\n  const hs = m.internetMessageHeaders || [];\n  const body = (m.uniqueBody && m.uniqueBody.content) || (m.body && m.body.content) || '';\n  return {\n    internet_message_id: m.internetMessageId || null,\n    graph_message_id: m.id,\n    conversation_id: m.conversationId || null,\n    from_address: addr(m.from) || addr(m.sender),\n    from_name: (m.from && m.from.emailAddress && m.from.emailAddress.name) || '',\n    to_addresses: (m.toRecipients || []).map(addr).filter(Boolean),\n    cc_addresses: (m.ccRecipients || []).map(addr).filter(Boolean),\n    recipient_names: names,\n    subject: m.subject || '',\n    body_text: String(body).replace(/\\r\\n/g, '\\n').slice(0, 8000),\n    headers: {\n      auth_as: header(hs, 'X-MS-Exchange-Organization-AuthAs'),\n      auto_submitted: header(hs, 'Auto-Submitted'),\n      precedence: header(hs, 'Precedence'),\n      x_autoreply: header(hs, 'X-Autoreply'),\n      x_autorespond: header(hs, 'X-Autorespond'),\n      headers_present: hs.length > 0,\n    },\n    event_at: m.receivedDateTime,\n    is_draft: !!m.isDraft,\n  };\n}\n\nmodule.exports = { deltaUrl, splitDelta, messageUrl, normalizeMessage };\n\n}, {\"./util\":\"util.js\"}],\n  \"util.js\": [function (module, exports, require) {\n'use strict';\n// Small, dependency-free helpers shared by every module.\n\nconst lower = (s) => (s == null ? '' : String(s).trim().toLowerCase());\n\nconst unique = (arr) => [...new Set((arr || []).filter(Boolean))];\n\nfunction domainOf(address) {\n  const a = lower(address);\n  const at = a.lastIndexOf('@');\n  return at === -1 ? '' : a.slice(at + 1);\n}\n\nfunction isInternal(address, internalDomains) {\n  const d = domainOf(address);\n  return (internalDomains || []).some((x) => lower(x) === d);\n}\n\nfunction setting(ctx, key, fallback) {\n  const s = ctx && ctx.settings ? ctx.settings[key] : undefined;\n  return s === undefined || s === null ? fallback : s;\n}\n\nfunction htmlEscape(s) {\n  return String(s == null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// Plain text → simple HTML paragraphs, preserving line breaks.\nfunction textToHtml(text) {\n  return String(text || '')\n    .split(/\\n{2,}/)\n    .map((p) => `<p>${htmlEscape(p).replace(/\\n/g, '<br>')}</p>`)\n    .join('\\n');\n}\n\n// \"Dana Whitfield\" → \"Dana\"; falls back to the local part of the address.\nfunction firstName(name, address) {\n  const n = String(name || '').trim();\n  if (n && !n.includes('@')) {\n    const clean = n.replace(/^(dr|mr|mrs|ms|prof)\\.?\\s+/i, '');\n    const first = clean.split(/[\\s,]+/)[0];\n    if (first && /^[\\p{L}'-]+$/u.test(first)) return first;\n  }\n  const local = lower(address).split('@')[0] || '';\n  const part = local.split(/[._-]/)[0] || local;\n  return part ? part.charAt(0).toUpperCase() + part.slice(1) : '';\n}\n\nfunction joinNames(names) {\n  const n = (names || []).filter(Boolean);\n  if (n.length <= 1) return n[0] || '';\n  if (n.length === 2) return `${n[0]} and ${n[1]}`;\n  return `${n.slice(0, -1).join(', ')}, and ${n[n.length - 1]}`;\n}\n\n// Display names come from email headers, i.e. from the client. Keep only what a\n// name looks like (letters, spaces, . ' -), max 60 chars, so a crafted name\n// can't smuggle instructions into prompts or emails.\nfunction sanitizeName(name) {\n  const s = String(name || '').normalize('NFC').replace(/[^\\p{L}\\p{M} .'-]/gu, ' ').replace(/\\s+/g, ' ').trim();\n  return s.slice(0, 60).trim();\n}\n\nmodule.exports = { lower, unique, domainOf, isInternal, setting, htmlEscape, textToHtml, firstName, joinNames, sanitizeName };\n\n}, {}]\n  };\n  const __cache = {};\n  function __load(id) {\n    if (__cache[id]) return __cache[id].exports;\n    const module = { exports: {} };\n    __cache[id] = module;\n    const [fn, deps] = __mods[id];\n    fn(module, module.exports, (name) => {\n      if (deps[name]) return __load(deps[name]);\n      throw new Error('module not bundled: ' + name);\n    });\n    return module.exports;\n  }\n  return __load(\"poller.js\");\n})() };\n// ---- end bundle ----\n\n// ---- node logic ----\nconst r = $json;\nif (r.error || r.statusCode !== 200) {\n  if (r.statusCode === 404) return { json: { skip: true } };          // deleted between delta and fetch\n  throw new Error('Graph get message failed: ' + JSON.stringify(r.error || r.body).slice(0, 500));\n}\nreturn { json: { msg: lib.poller.normalizeMessage(r.body) } };\n"
+      },
+      "id": "78ba34e5-c220-49c8-a426-e2d5f7ca3496",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sched.ingest_message($1::jsonb) AS r;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.msg || {}) ] }}"
+        }
+      },
+      "id": "73a42c7c-6d46-4799-a83a-057d75d093e7",
+      "name": "Ingest",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1980,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SchedPostgres001",
+          "name": "Sarah · Postgres (sched_agent)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0cea8e72-85a4-4b53-aa8b-25fd94819dc8",
+              "leftValue": "={{ $json.r.process === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "31354127-ad14-4430-a09b-97b5e1d4e2c9",
+      "name": "Process?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2200,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ---- node logic ----\nreturn { json: { type: 'message', message_id: $json.r.id } };\n"
+      },
+      "id": "82e42da9-f1e8-48d2-a265-fb29f80486c2",
+      "name": "Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SarahProcessor01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "7a3f1f60-175a-4bdc-ae55-7610af8f0bd1",
+      "name": "Run processor",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        180
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sched.settings SET value = $1::jsonb WHERE key = 'poller_delta_link';",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.cursor) ] }}"
+        }
+      },
+      "id": "c519ade2-76b7-4b02-a668-aa9814faf2c9",
+      "name": "Save cursor",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        440
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SchedPostgres001",
+          "name": "Sarah · Postgres (sched_agent)"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sched.release_lease('poller');",
+        "options": {}
+      },
+      "id": "12f3c6de-2fa1-44a8-a9e8-5ef898f94e5d",
+      "name": "Release lease",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1540,
+        440
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SchedPostgres001",
+          "name": "Sarah · Postgres (sched_agent)"
+        }
+      },
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [
+        [
+          {
+            "node": "Mode + lease",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mode + lease": {
+      "main": [
+        [
+          {
+            "node": "Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run?": {
+      "main": [
+        [
+          {
+            "node": "Delta URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delta URL": {
+      "main": [
+        [
+          {
+            "node": "Graph: inbox delta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: inbox delta": {
+      "main": [
+        [
+          {
+            "node": "Split",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split": {
+      "main": [
+        [
+          {
+            "node": "Fan out",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save cursor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan out": {
+      "main": [
+        [
+          {
+            "node": "Graph: get message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: get message": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ingest": {
+      "main": [
+        [
+          {
+            "node": "Process?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process?": {
+      "main": [
+        [
+          {
+            "node": "Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event": {
+      "main": [
+        [
+          {
+            "node": "Run processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save cursor": {
+      "main": [
+        [
+          {
+            "node": "Release lease",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "SarahErrors00001"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Every minute: reads new mail in Sarah's Inbox via Graph delta, stores each email once, hands new ones to the processor."
+  },
+  "tags": []
+}

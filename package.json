@@ -1,0 +1,20 @@
+{
+  "name": "bzb-scheduling-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sarah — BZB's AI scheduling assistant for Vic. n8n + Microsoft Graph + LiteLLM + Postgres.",
+  "scripts": {
+    "build": "node scripts/build-workflows.js",
+    "test": "node --test test/unit/*.test.js",
+    "test:db": "bash scripts/test-db.sh",
+    "test:e2e": "bash test/e2e/run.sh",
+    "check": "npm test && npm run build && git diff --exit-code n8n/workflows"
+  },
+  "devDependencies": {
+    "luxon": "^3.7.2",
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

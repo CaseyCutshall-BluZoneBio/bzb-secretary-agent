@@ -1,0 +1,184 @@
+{
+  "id": "SarahTimers00001",
+  "name": "Sarah · Timers",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "3dfebbc3-dda2-4c2b-adff-23ff445371ad",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ev FROM sched.timer_events() AS ev;",
+        "options": {}
+      },
+      "id": "55cf8004-42c1-448c-a561-f77ea0130b79",
+      "name": "Timer events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SchedPostgres001",
+          "name": "Sarah · Postgres (sched_agent)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ---- node logic ----\nreturn { json: $json.ev };\n"
+      },
+      "id": "fa1074d6-9c8a-45f8-a8bc-a87c54cfca66",
+      "name": "Unwrap",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SarahProcessor01"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "b65e62fe-d856-4ea7-a0f9-e7726b10e260",
+      "name": "Run processor",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SarahExecutor001"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "9ee062f1-52c5-40c5-a0c9-fc6cbcf84933",
+      "name": "Kick executor",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Timer events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Timer events": {
+      "main": [
+        [
+          {
+            "node": "Unwrap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unwrap": {
+      "main": [
+        [
+          {
+            "node": "Run processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run processor": {
+      "main": [
+        [
+          {
+            "node": "Kick executor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "SarahErrors00001"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Every 15 minutes: stuck-email sweeper, hold release, then follow-up / stall / reminder events through the processor."
+  },
+  "tags": []
+}

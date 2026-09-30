@@ -1,0 +1,140 @@
+{
+  "id": "SarahErrors00001",
+  "name": "Sarah · Errors",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "8d458793-934d-4aab-a245-0aa5915228db",
+      "name": "Workflow failed",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sched.setting_text('graph_base_url') AS graph, sched.setting_text('sarah_upn') AS sarah,\n              sched.setting_text('alert_address') AS alert_to, sched.setting_text('n8n_base_url') AS n8n;",
+        "options": {}
+      },
+      "id": "be8eb03c-5bdc-465b-a5c8-b25c3b2e6e87",
+      "name": "Settings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SchedPostgres001",
+          "name": "Sarah · Postgres (sched_agent)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ---- node logic ----\nconst e = $('Workflow failed').first().json;\nconst s = $json;\nconst exec = e.execution || {};\nconst wf = e.workflow || {};\nconst text = [\n  'An n8n workflow failed.',\n  '',\n  'Workflow: ' + (wf.name || '?'),\n  'Node:     ' + (exec.lastNodeExecuted || '?'),\n  'Error:    ' + ((exec.error && exec.error.message) || '?'),\n  'Execution: ' + (s.n8n ? s.n8n.replace(/\\/$/, '') + '/workflow/' + wf.id + '/executions/' + exec.id : exec.id),\n  '',\n  'If this was an inbound email, the thread is moved to NEEDS_VIC by the timer sweeper within ~15 minutes.',\n].join('\\n');\nconst esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');\nreturn { json: { url: s.graph + '/users/' + encodeURIComponent(s.sarah) + '/sendMail', body: {\n  message: { subject: '[Sarah] Workflow failed: ' + (wf.name || '?'),\n             body: { contentType: 'HTML', content: '<pre style=\"font-family:Consolas,monospace\">' + esc(text) + '</pre>' },\n             toRecipients: [{ emailAddress: { address: s.alert_to } }] },\n  saveToSentItems: true } } };\n"
+      },
+      "id": "1e297fea-e0ea-4956-ac44-06c602e852aa",
+      "name": "Build alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": false,
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}"
+      },
+      "id": "ff8c7cd0-7708-4749-a03f-fbb0fae5b768",
+      "name": "Graph: email Casey",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "SchedGraphApp001",
+          "name": "Sarah · Microsoft Graph (app-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Workflow failed": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Build alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build alert": {
+      "main": [
+        [
+          {
+            "node": "Graph: email Casey",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Error workflow for every Sarah workflow: emails the alert address from Sarah's mailbox."
+  },
+  "tags": []
+}

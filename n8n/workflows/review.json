@@ -1,0 +1,253 @@
+{
+  "id": "SarahReview00001",
+  "name": "Sarah · Review",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "sched-review",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1900e2a2-73e7-4074-a5bd-87979cf900dc",
+      "name": "Link opened (GET)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "7dbbe732-6e52-4986-af31-1b265175e32d"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ---- node logic ----\nconst q = $json.query || {};\nconst esc = (s) => String(s == null ? '' : s).replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));\nconst approve = q.a === 'approve';\n// A link scanner that fetches this page does nothing: only the POST below acts.\nconst form = `<p>${approve ? 'Approve' : 'Reject'} outbox item #${esc(q.id)}?</p>\n<form method=\"post\"><input type=\"hidden\" name=\"id\" value=\"${esc(q.id)}\"><input type=\"hidden\" name=\"t\" value=\"${esc(q.t)}\">\n<input type=\"hidden\" name=\"a\" value=\"${approve ? 'approve' : 'reject'}\">\n<button class=\"${approve ? '' : 'reject'}\" type=\"submit\">${approve ? 'Approve and send' : 'Reject'}</button></form>`;\nreturn { json: { html: `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Sarah review</title>\n<style>body{font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 16px;color:#11111F}h1{font-size:20px}button{font-size:16px;padding:10px 20px;border:0;border-radius:6px;background:#11111F;color:#fff;cursor:pointer}.reject{background:#a33}</style>\n</head><body><h1>Sarah · shadow review</h1>${form}</body></html>` } };\n"
+      },
+      "id": "a52b365e-74c5-4d94-a8ba-41ba43aeaa33",
+      "name": "Confirm page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "628880ca-0fb0-47d7-a8bb-d995048ec707",
+      "name": "Show confirm page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sched-review",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "0ebe5946-1e0d-4453-abdb-66009a762612",
+      "name": "Button pressed (POST)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        440
+      ],
+      "webhookId": "455a79e7-1af9-4351-a87d-851bb240202d"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sched.outbox_review($1::bigint, $2, $3) AS r;",
+        "options": {
+          "queryReplacement": "={{ [ String(parseInt(($json.body || {}).id, 10) || 0), String(($json.body || {}).t || ''), String(($json.body || {}).a || '') ] }}"
+        }
+      },
+      "id": "ecc05445-8db1-4035-a8c1-173823a0c1d7",
+      "name": "Apply review",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        440
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SchedPostgres001",
+          "name": "Sarah · Postgres (sched_agent)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ---- node logic ----\nconst r = $json.r || {};\nconst esc = (s) => String(s == null ? '' : s).replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));\nconst msg = `<p>${esc(r.message)}</p>`;\nreturn { json: { html: `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Sarah review</title>\n<style>body{font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 16px;color:#11111F}h1{font-size:20px}button{font-size:16px;padding:10px 20px;border:0;border-radius:6px;background:#11111F;color:#fff;cursor:pointer}.reject{background:#a33}</style>\n</head><body><h1>${r.ok ? 'Done' : 'Nothing changed'}</h1>${msg}</body></html>` } };\n"
+      },
+      "id": "c03b495b-58b7-466e-a5cb-947282c5bc67",
+      "name": "Result page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "34aa478d-2b48-44bb-a4d4-a7f7916bdc4c",
+      "name": "Show result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SarahExecutor001"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "076ddb1f-7803-4a4e-af13-9a80672444f1",
+      "name": "Kick executor",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "Link opened (GET)": {
+      "main": [
+        [
+          {
+            "node": "Confirm page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm page": {
+      "main": [
+        [
+          {
+            "node": "Show confirm page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Button pressed (POST)": {
+      "main": [
+        [
+          {
+            "node": "Apply review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply review": {
+      "main": [
+        [
+          {
+            "node": "Result page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Result page": {
+      "main": [
+        [
+          {
+            "node": "Show result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Show result": {
+      "main": [
+        [
+          {
+            "node": "Kick executor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "SarahErrors00001"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Shadow mode: the approve/reject links in review emails. GET shows a confirm button; only the POST acts."
+  },
+  "tags": []
+}
