@@ -5,7 +5,9 @@
 | Piece | Where | Job |
 |---|---|---|
 | Sarah's mailbox | Exchange Online, shared mailbox (no license) | The only address that ever sends. Clients and Vic write to it |
-| App registration "BZB Scheduling Agent" | Entra + Exchange RBAC for Applications | App-only Graph token. Mail rights on Sarah only; calendar rights on Vic only |
+| App registration "BZB Scheduling Agent" | Entra + Exchange RBAC for Applications | App-only Graph token. Mail rights on Sarah only (and, legacy, calendar rights on Vic until he connects through the portal) |
+| App registration "BZB Sarah Portal" | Entra, assignment required ("Sarah users" group) | Delegated sign-in: each employee consents to Sarah using **their own** calendar |
+| Portal + token broker | `sarah-portal` in the compose stack; UI public through Tailscale Funnel `:8443`, broker on the compose network only | Sign-in, calendar consent, settings, pause. The broker holds each employee's encrypted refresh token and makes their calendar calls for n8n (`docs/09-portal.md`) |
 | n8n (6 workflows) | BZB-AI-1 compose stack | Scheduling, retries, HTTP calls, error alerts |
 | `sched` schema | Postgres on BZB-AI-1 (own database + role) | All state, config, and invariants |
 | LiteLLM → local model | BZB-AI-1 | Classifies emails; writes email wording |
@@ -16,8 +18,8 @@
 | Workflow | Trigger | Does |
 |---|---|---|
 | **Sarah · Poller** | every minute | Graph delta on Sarah's Inbox → fetch each new message → `ingest_message` (stores it exactly once) → Processor |
-| **Sarah · Processor** | called per email / timer event | `load_context` → route → classify (LLM) → read Vic's calendar → decide → draft (LLM) → validate → `apply_plan` → kick Executor |
-| **Sarah · Executor** | every minute + on demand | `outbox_claim` → Graph calls (createReply/send, events) → `outbox_report` |
+| **Sarah · Processor** | called per email / timer event | `load_context` → route → classify (LLM) → read the employee's calendar (app-only Graph, or the portal's broker for delegated employees) → decide → draft (LLM) → validate → `apply_plan` → kick Executor |
+| **Sarah · Executor** | every minute + on demand | `outbox_claim` → Graph calls (mail always app-only; holds and bookings through the broker for delegated employees) → `outbox_report` |
 | **Sarah · Timers** | every 15 min | `timer_events`: sweep stuck work, release holds, then follow-up / stall / reminder events → Processor |
 | **Sarah · Review** | webhook (tailnet only) | Shadow mode approve/reject: GET shows a confirm button, only the POST acts |
 | **Sarah · Errors** | any Sarah workflow fails | Emails the alert address from Sarah's mailbox |
@@ -99,7 +101,9 @@ Nothing in the Processor talks to Graph except the read-only calendar lookup. Ev
 
 | Threat | Control |
 |---|---|
-| Stolen app secret reads or sends from any mailbox | No Entra permissions at all. Exchange RBAC for Applications grants mail on Sarah only and calendar on Vic only (`m365/exchange-setup.ps1`). A stolen secret can't read Vic's mail or send as him |
+| Stolen app secret reads or sends from any mailbox | No Entra permissions at all. Exchange RBAC for Applications grants mail on Sarah only and (legacy) calendar on Vic only (`m365/exchange-setup.ps1`). A stolen secret can't read Vic's mail or send as him. Once everyone uses the portal, the app loses calendar rights entirely |
+| Stolen employee tokens | Refresh tokens live only in `sched.portal_tokens`, AES-256-GCM encrypted with a key that's only in the portal's env, bound to the employee row. The broker never returns a token: n8n gets Graph's answer for one of three calendar operations on that employee's own calendar (`/me`), so tokens never reach n8n's execution logs. The portal's DB role can run its own functions and read no tables |
+| The internet-facing portal | Assignment required in Entra plus tenant/home-tenant/member/domain checks, `__Host-` cookies, CSRF on every POST, strict CSP with no script, HSTS, rate-limited sign-in, URLs built only from `PORTAL_BASE_URL`, broker port never published (`docs/09-portal.md` §4) |
 | Anyone who emails Sarah drives Vic's calendar | Only an **enrolled employee** can start a thread, and only with `X-MS-Exchange-Organization-AuthAs: Internal` (Exchange-authenticated internal mail). A spoofed "Vic" email is ignored, and Casey gets an alert. External senders can only continue threads that already exist |
 | Prompt injection in a client email | The model's output is a fixed JSON classification. It can't add recipients, choose times, or trigger actions. Recipients come from message headers and the thread record. Every outbound list is checked against the thread's allowed people, and a mismatch throws. Client display names are reduced to letters/spaces (60 chars) before they're stored, and are kept out of the prompt that classifies Vic's YES/NO |
 | Internal notes reaching the client | Sarah replies to (and so quotes) only the newest email **from a client**, or Vic's original trigger. Never Vic's private reply, a colleague's note, an auto-reply, or the confirmation thread |
@@ -150,11 +154,13 @@ If there aren't enough clean slots:
 | Table | Holds |
 |---|---|
 | `settings` | Run mode, identities, endpoints, tunables, poller cursor, leases |
-| `employees` | One row per enrolled person: timezone, hours, gaps, defaults |
+| `employees` | One row per enrolled person: timezone, hours, gaps, defaults, calendar mode (`app` / `delegated`), paused, needs-reconnect |
 | `threads` | One negotiation: clients, duration, location, state, rounds, accepted offer, booked event |
 | `thread_events` | Every state transition, with reason |
 | `offers` | Every slot ever offered (with `option_no` as the client saw it), its status and hold |
 | `messages` | Every inbound email (headers, body, classification, disposition) and every sent one |
 | `outbox` | Every side effect: status, attempts, draft id, approval token, result |
+| `portal_tokens` | Each delegated employee's encrypted MSAL token cache (`db/004_portal.sql`) |
+| `portal_sessions` | Portal sign-in sessions (hashed ids) |
 
 `SELECT * FROM sched.status;` shows the threads at a glance.

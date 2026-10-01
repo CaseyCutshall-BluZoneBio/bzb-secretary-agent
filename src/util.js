@@ -62,4 +62,11 @@ function sanitizeName(name) {
   return s.slice(0, 60).trim();
 }
 
-module.exports = { lower, unique, domainOf, isInternal, setting, htmlEscape, textToHtml, firstName, joinNames, sanitizeName };
+// The address an employee sends from and receives at: the primary SMTP address
+// when known (self-service rows), else the UPN (they're usually the same).
+const employeeAddress = (emp) => lower((emp && (emp.mail || emp.upn)) || '');
+
+// Is this employee's calendar reached through the portal's broker?
+const delegated = (emp) => !!emp && emp.calendar_auth === 'delegated';
+
+module.exports = { employeeAddress, delegated, lower, unique, domainOf, isInternal, setting, htmlEscape, textToHtml, firstName, joinNames, sanitizeName };

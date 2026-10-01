@@ -4,7 +4,7 @@
 // The model writes words; this module decides whether those words may be sent.
 // A draft that mentions any date, time, timezone, link, or address — or that
 // misuses a placeholder — is thrown away and replaced by a fixed template.
-const { htmlEscape, textToHtml, joinNames, lower, isInternal, setting } = require('./util');
+const { htmlEscape, textToHtml, joinNames, lower, isInternal, setting, employeeAddress } = require('./util');
 const { formatSlotShort, locationPhrase } = require('./format');
 const { DateTime } = require('./luxon');
 
@@ -87,9 +87,11 @@ function validateDraft(rawBody, purpose) {
   return { ok: errors.length === 0, body, errors };
 }
 
-function signature(ctx) {
-  return [setting(ctx, 'sarah_name', 'Sarah'), setting(ctx, 'signature_title', 'Scheduling Assistant (AI)'),
-          setting(ctx, 'company_name', '')].filter(Boolean).join('\n');
+// The second line is the AI disclosure. It names the employee Sarah is working
+// for, so it comes from their row when set ("Scheduling Assistant to Brad Lee (AI)").
+function signature(ctx, employee) {
+  const title = (employee && employee.signature_title) || setting(ctx, 'signature_title', 'Scheduling Assistant (AI)');
+  return [setting(ctx, 'sarah_name', 'Sarah'), title, setting(ctx, 'company_name', '')].filter(Boolean).join('\n');
 }
 
 function fillPlaceholders(body, { slotsText, timeText }) {
@@ -113,8 +115,8 @@ function quoteHtml(target, zone) {
 }
 
 /** Final client-facing email: body text + signature, HTML version + quote. */
-function renderClientEmail(ctx, body, fill, replyTarget, zone) {
-  const text = `${fillPlaceholders(body, fill)}\n\n${signature(ctx)}`;
+function renderClientEmail(ctx, body, fill, replyTarget, zone, employee) {
+  const text = `${fillPlaceholders(body, fill)}\n\n${signature(ctx, employee)}`;
   const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${textToHtml(text)}</div>\n${quoteHtml(replyTarget, zone)}`;
   return { body_text: text, body_html: html };
 }
@@ -136,7 +138,7 @@ function clientRecipients(thread, employee, purpose) {
   const to = (thread.client_addresses || []).map((a) => person(a, names));
   const cc = (thread.other_internal || []).map((a) => person(a, {}));
   const bcc = [];
-  const emp = person(employee.upn, { [lower(employee.upn)]: employee.display_name });
+  const emp = person(employeeAddress(employee), { [employeeAddress(employee)]: employee.display_name });
   if (purpose === 'intro') {
     (employee.bcc_after_intro ? bcc : cc).push(emp);
   } else if (!employee.bcc_after_intro) {
@@ -184,7 +186,7 @@ function clientLabel(thread) {
 function internalMail(ctx, employee, subject, lines) {
   const text = `${lines.filter((l) => l !== null && l !== undefined).join('\n')}\n\n${setting(ctx, 'sarah_name', 'Sarah')}`;
   return {
-    to: [{ address: lower(employee.upn), name: employee.display_name }], cc: [], bcc: [],
+    to: [{ address: employeeAddress(employee), name: employee.display_name }], cc: [], bcc: [],
     subject,
     body_text: text,
     body_html: `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${textToHtml(text)}</div>`,
@@ -251,7 +253,34 @@ function vicNoClientsMail(ctx, employee, subject) {
      'Reply-all with the client on To or CC and me copied, and I\'ll take it from there.']);
 }
 
+function portalLink(ctx, path) {
+  const base = String(setting(ctx, 'portal_base_url', '') || '').replace(/\/+$/, '');
+  return base ? `${base}${path}` : null;
+}
+
+function vicPausedMail(ctx, employee, subject) {
+  const link = portalLink(ctx, '/');
+  return internalMail(ctx, employee,
+    `Paused, so I didn't start: ${subject || '(no subject)'}`,
+    [`Hi ${employee.first_name},`, '',
+     'You copied me on this email, but you\'ve paused me, so I haven\'t contacted anyone.', '',
+     link ? `Resume me at ${link} and then send the request again.` : 'Resume me in the Sarah portal and then send the request again.']);
+}
+
+function vicNotConnectedMail(ctx, employee, subject) {
+  const link = portalLink(ctx, '/connect');
+  const lost = !!employee.calendar_connected_at;
+  return internalMail(ctx, employee,
+    `${lost ? 'Reconnect your calendar' : 'Connect your calendar'}, so I didn't start: ${subject || '(no subject)'}`,
+    [`Hi ${employee.first_name},`, '',
+     lost ? 'You copied me on this email, but I\'ve lost access to your calendar, so I haven\'t contacted anyone.'
+          : 'You copied me on this email, but your calendar isn\'t connected to me yet, so I haven\'t contacted anyone.', '',
+     link ? `${lost ? 'Reconnect' : 'Connect'} it at ${link} (it takes a minute), then send the request again.`
+          : 'Connect it in the Sarah portal, then send the request again.']);
+}
+
 module.exports = {
+  portalLink, vicPausedMail, vicNotConnectedMail,
   PLACEHOLDERS, TEMPLATES, FORBIDDEN, HEADS_UP, stripSignoff, validateDraft, fillPlaceholders, renderClientEmail,
   signature, quoteHtml, clientRecipients, checkRecipients, hasExternal, clientLabel,
   vicConfirmationMail, vicReminderMail, vicClarifyMail, vicNoticeMail, vicStalledMail, vicNoClientsMail,

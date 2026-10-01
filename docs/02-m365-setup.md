@@ -2,6 +2,8 @@
 
 **Result:** a shared mailbox for Sarah, and an app that can mail as Sarah and use Vic's calendar, and nothing else in the tenant.
 
+> **Calendars now come through the portal.** Employees connect their own calendar by signing in (delegated access; `docs/09-portal.md`). The calendar half of this guide (`CustomAttribute11` and the `Application Calendars.ReadWrite` assignment) is **legacy**: it keeps Vic working until he connects once, and is then removed (`docs/09-portal.md` §7). The mail half is unchanged and still required.
+
 You need Global Admin (or Application Admin + Exchange Admin). Allow about an hour, most of it waiting for Exchange to apply the scoping.
 
 ## 0. One question for Vic first
@@ -77,7 +79,8 @@ If Vic shows Mail as True, or Brad shows anything True, **stop and fix it before
 
 ## Adding another employee later
 
-1. Tag their mailbox with `Set-Mailbox <upn> -CustomAttribute11 "SchedAgentCal"`. That puts their calendar in scope; wait for RBAC to refresh, then re-run the verify step.
-2. Insert their row into `sched.employees` (copy Vic's and change it).
+Add them to the **Sarah users** group in Entra and send them the portal link (`docs/09-portal.md`). They sign in, connect their calendar and set their preferences. No PowerShell, no SQL.
 
-Their mail is never in scope. Sarah only ever reads her own mailbox.
+*Legacy (before the portal):* tag their mailbox with `Set-Mailbox <upn> -CustomAttribute11 "SchedAgentCal"`, wait for RBAC, re-run the verify step, and insert their `sched.employees` row by hand. Don't do this for new people; it widens the app-only secret's reach.
+
+Their mail is never in scope either way. Sarah only ever reads her own mailbox.

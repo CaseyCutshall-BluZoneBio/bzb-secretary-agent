@@ -204,14 +204,23 @@ function calendarRequest(S) {
   let to = spans.length ? DateTime.max(...spans.map((s) => s[1])) : now;
   from = from.minus({ hours: 12 });
   to = to.plus({ days: 1 });
+  const iso = (d) => d.toUTC().toISO({ suppressMilliseconds: true });
+  if (U.delegated(emp)) {
+    // The portal's broker reads the calendar with the employee's own token. n8n
+    // never sees that token; it names the employee and the window, nothing else.
+    const broker = String(U.setting(ctx, 'portal_internal_url', '')).replace(/\/+$/, '');
+    return { via: 'broker', url: `${broker}/internal/v1/calendar`,
+             body: { employee_upn: U.lower(emp.upn), op: 'calendar_view', start: iso(from), end: iso(to) } };
+  }
   const base = U.setting(ctx, 'graph_base_url', 'https://graph.microsoft.com/v1.0');
   const qs = [
-    `startDateTime=${encodeURIComponent(from.toUTC().toISO({ suppressMilliseconds: true }))}`,
-    `endDateTime=${encodeURIComponent(to.toUTC().toISO({ suppressMilliseconds: true }))}`,
+    `startDateTime=${encodeURIComponent(iso(from))}`,
+    `endDateTime=${encodeURIComponent(iso(to))}`,
     `$select=${encodeURIComponent('subject,start,end,showAs,isAllDay,isCancelled,categories,responseStatus')}`,
     '$top=500',
   ].join('&');
   return {
+    via: 'app',
     url: `${base}/users/${encodeURIComponent(U.lower(emp.upn))}/calendarView?${qs}`,
     prefer: 'outlook.timezone="UTC"',
   };
@@ -258,7 +267,10 @@ function start(ctx) {
     ctx = S.ctx;
   }
   if (r.kind === 'skip') { S.done = true; S.log.push(`skip: ${r.reason || ''}`); return S; }
-  if (r.kind === 'ignore') { S.action = { type: 'ignore', disposition: r.disposition, attach: r.attach, alert: r.alert }; return S; }
+  if (r.kind === 'ignore') {
+    S.action = { type: 'ignore', disposition: r.disposition, attach: r.attach, alert: r.alert, notice: r.notice };
+    return S;
+  }
   if (r.kind === 'timer') { S.action = timerAction(r.action); return prepareCalendar(S); }
 
   const emp = employeeOf(S);
@@ -327,7 +339,7 @@ function decideTrigger(S, parsed) {
   const sarah = U.lower(U.setting(ctx, 'sarah_upn', ''));
   const domains = U.setting(ctx, 'internal_domains', []);
   const recips = U.unique([...(msg.to_addresses || []), ...(msg.cc_addresses || [])].map(U.lower))
-    .filter((a) => a !== sarah && a !== U.lower(emp.upn));
+    .filter((a) => a !== sarah && a !== U.lower(emp.upn) && a !== U.employeeAddress(emp));
   const clients = recips.filter((a) => !U.isInternal(a, domains));
   const internal = recips.filter((a) => U.isInternal(a, domains));
   if (!clients.length) return { type: 'notify_no_clients' };
@@ -495,7 +507,10 @@ function act(S, calResp) {
   let busy = null;
   if (S.calendar) {
     S.calendar = null;
-    if (!calResp || calResp.error || !Array.isArray(calResp.value)) {
+    if (needsReconnect(calResp)) {
+      S.log.push('calendar read: the employee\'s token is dead (needs reconnect)');
+      S.action = { type: 'escalate', reason: reconnectReason(S.ctx), handoff: false, origin: S.action, needs_reconnect: true };
+    } else if (!calResp || calResp.error || !Array.isArray(calResp.value)) {
       S.log.push(`calendar read failed: ${JSON.stringify((calResp && calResp.error) || calResp).slice(0, 300)}`);
       S.action = { type: 'escalate', reason: "I couldn't read your calendar (Microsoft Graph error)", handoff: false, origin: S.action };
     } else {
@@ -522,6 +537,18 @@ function act(S, calResp) {
   return S;
 }
 
+// The broker's answer when the employee's Microsoft sign-in is expired or revoked.
+function needsReconnect(resp) {
+  const e = resp && resp.error;
+  return !!(e && e.status === 409 && e.body && e.body.error && e.body.error.code === 'NeedsReconnect');
+}
+
+function reconnectReason(ctx) {
+  const link = D.portalLink(ctx, '/connect');
+  return 'Sarah lost access to your calendar (your Microsoft sign-in for Sarah expired or was revoked). '
+    + `Reconnect at ${link || 'the Sarah portal'} and then handle this thread yourself`;
+}
+
 function touchIfClient(S) {
   if (S.route.kind === 'client_reply') S.plan.thread.set.touch_inbound = true;
 }
@@ -531,6 +558,13 @@ function doIgnore(S, a) {
   S.plan.message.disposition = a.disposition;
   if (!(a.attach && ctx.thread)) S.plan.thread.id = null;
   if (a.touch) touchIfClient(S);
+  if (a.notice) {
+    // Paused, or calendar not connected: tell the employee why nothing happened.
+    const emp = employeeOf(S);
+    const mail = a.notice === 'paused' ? D.vicPausedMail(ctx, emp, (ctx.message || {}).subject)
+                                       : D.vicNotConnectedMail(ctx, emp, (ctx.message || {}).subject);
+    outboxInternal(S, 'vic_notice', mail, { no_thread: !S.plan.thread.id });
+  }
   if (a.alert) {
     const m = ctx.message || {};
     S.plan.outbox.push({
@@ -580,7 +614,7 @@ function queueClientEmail(S, purpose, fill, extra = {}) {
     purpose,
     fill,
     recipients: D.clientRecipients(t, emp, purpose),
-    allowed: [...(t.client_addresses || []), ...(t.other_internal || []), U.lower(emp.upn)],
+    allowed: [...(t.client_addresses || []), ...(t.other_internal || []), U.employeeAddress(emp)],
     reply_target: {
       graph_message_id: target.graph_message_id, from_address: target.from_address, from_name: target.from_name,
       subject: target.subject, event_at: target.event_at, body_text: target.body_text,
@@ -862,7 +896,7 @@ function finish(S, resp) {
     const recErrors = D.checkRecipients(S.ctx, e.recipients, e.allowed);
     if (recErrors.length) throw new Error(`recipient check failed: ${recErrors.join('; ')}`);
 
-    const rendered = D.renderClientEmail(S.ctx, body, e.fill, e.reply_target, employeeOf(S).timezone);
+    const rendered = D.renderClientEmail(S.ctx, body, e.fill, e.reply_target, employeeOf(S).timezone, employeeOf(S));
     S.plan.outbox.push({
       kind: 'reply', purpose: e.purpose, depends_on_ref: e.depends_on_ref || undefined,
       needs_approval: D.hasExternal(S.ctx, e.recipients),

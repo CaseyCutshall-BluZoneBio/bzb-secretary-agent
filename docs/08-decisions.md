@@ -49,3 +49,28 @@ Every plan records the `plan_version` it was decided on, and `apply_plan` refuse
 
 ### D16 · 2026-09-30 · When the model is down, don't guess
 A keyword fallback for triggers was removed: "Sarah, don't schedule anything yet, I'll call them" matches the same keywords. Casey is alerted instead.
+
+### D17 · 2026-09-30 · Delegated calendars, through a broker that never hands out tokens
+Calendar access is now per employee and delegated: each person signs in to the portal and consents to Sarah using their own calendar. Enrolling someone no longer needs PowerShell (`CustomAttribute11`) or SQL, and once everyone is moved over, the app-only secret loses calendar rights entirely and can touch nothing but Sarah's mailbox. Mail stays app-only and RBAC-scoped (D4); nothing ever sends from an employee's mailbox.
+
+Three choices inside that:
+- **A separate app ("BZB Sarah Portal").** The app-only app keeps zero Entra permissions (D4's audit rule), and each secret lives in one place: the portal's in the portal, the app-only one in n8n.
+- **The broker makes the calendar calls instead of returning tokens.** A returned access token would pass through n8n's item data and be saved in its execution history. A raw delegated `Calendars.ReadWrite` token also reaches every calendar shared *with* that person. So n8n names an employee and one of three operations, and the portal calls Graph on `/me` and passes Graph's answer back unchanged. Tokens never leave the portal, and the executor's error handling didn't change. Every broker call is a POST with a body, which also sidesteps n8n's *Send Body* expression bug.
+- **Refresh tokens at rest:** an MSAL cache per employee, AES-256-GCM, key only in the portal's env, ciphertext bound to the employee row. The portal's DB role can run its own functions and read no tables.
+
+Vic's existing app-only path keeps working (`calendar_auth = 'app'`) until he signs in and connects once.
+
+### D18 · 2026-09-30 · Pause affects new requests only; a dead token hands threads back
+**Pause** is for "I'm away": new requests from that person are ignored, and Sarah emails them why. Threads already running continue, so no client is left hanging mid-negotiation.
+
+**A dead token** (revoked, consent withdrawn, account disabled, Conditional Access) is detected by a daily refresh, ideally before any client writes. The employee is flagged once and gets one reconnect email. New requests are refused with a notice. A running thread that needs the calendar goes to `NEEDS_VIC` with a specific reason, and the client is told nothing. `NEEDS_VIC` is terminal for Sarah, so after reconnecting the employee finishes those threads by hand. A resumable "paused for reconnect" state was considered and left out: the daily refresh makes the case rare, and handing back follows the rule "when unsure, give it to a person". Two special cases: a disabled account alerts Casey instead of emailing a dead mailbox, and a bad *portal* secret flags nobody, because one expired secret must not email every employee.
+
+### D19 · 2026-09-30 · The portal is public, on Tailscale Funnel :8443
+Employees sign in from wherever they are, so the portal is internet-facing at `https://bzb-ai-1.tail9f1964.ts.net:8443`: Open WebUI holds Funnel's 443, and Funnel allows only 443/8443/10000. Being public changes the defaults:
+- **Access:** "Assignment required" plus a `Sarah users` group (mandatory), and generic errors.
+- **Browser hardening:** `__Host-` cookies (the hostname is shared with Open WebUI), CSRF on every POST, a strict CSP with no script, HSTS.
+- **Rate limits** on sign-in, keyed on the socket address.
+- **No trusted proxy headers:** every URL is built from `PORTAL_BASE_URL` alone, because TLS ends at tailscaled and the app can't tell a real forwarded header from a forged one. The cost: per-IP rate limiting effectively becomes portal-wide.
+- **The broker's port is never published.**
+
+Funnel hostnames appear in certificate-transparency logs, so the portal assumes it will be found. Moving to a branded domain later is a config change (`docs/09-portal.md` §4).

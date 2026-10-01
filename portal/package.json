@@ -1,0 +1,18 @@
+{
+  "name": "sarah-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sarah's self-service portal: Microsoft 365 sign-in, delegated calendar consent, settings, and the internal token broker.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@azure/msal-node": "7.0.0",
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

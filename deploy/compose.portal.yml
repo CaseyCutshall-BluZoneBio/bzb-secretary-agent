@@ -1,0 +1,33 @@
+# Sarah portal: merge this service into /opt/bzb-ai/compose/docker-compose.yml
+# (or run with: docker compose -f docker-compose.yml -f compose.portal.yml up -d).
+# See docs/09-portal.md. Secrets come from portal.env (chmod 600, not in git).
+services:
+  sarah-portal:
+    build:
+      context: /opt/bzb-ai/sarah             # this repo, checked out on BZB-AI-1
+      dockerfile: portal/Dockerfile
+    image: sarah-portal:local
+    container_name: sarah-portal
+    restart: unless-stopped
+    env_file: ./portal.env
+    environment:
+      PORTAL_BASE_URL: https://bzb-ai-1.tail9f1964.ts.net:8443
+      PORTAL_PORT: "3000"
+      PORTAL_BROKER_PORT: "3001"
+      PGHOST: postgres                       # the Postgres service name in this stack
+      PGDATABASE: sched_agent
+      PGUSER: sched_portal
+    ports:
+      # Public UI: loopback only. Tailscale Funnel maps :8443 → 127.0.0.1:3000.
+      - "127.0.0.1:3000:3000"
+      # 3001 (the token broker) is deliberately NOT published. n8n reaches it
+      # as http://sarah-portal:3001 on the compose network.
+    depends_on:
+      - postgres
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

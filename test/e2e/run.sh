@@ -22,7 +22,7 @@ rm -rf "$WORK"; mkdir -p "$WORK/n8n" "$WORK/wf"
 echo "== database"
 psql -q -h "$PGH" -p "$PGP" -d postgres -c "DROP DATABASE IF EXISTS $DB;"
 psql -q -h "$PGH" -p "$PGP" -d postgres -c "CREATE DATABASE $DB OWNER sched_agent;"
-for f in db/001_schema.sql db/002_functions.sql db/003_seed.sql; do
+for f in db/0[0-9][0-9]_*.sql; do
   PGPASSWORD=${SCHED_PGPASSWORD:-} psql -q -v ON_ERROR_STOP=1 -h "$PGH" -p "$PGP" -U sched_agent -d $DB -f "$f"
 done
 
@@ -33,6 +33,7 @@ const c = require(process.cwd() + '/n8n/credentials.template.json');
 Object.assign(c[0].data, { host, port: Number(port), database: 'sched_e2e', password: process.env.SCHED_PGPASSWORD || 'x' });
 Object.assign(c[1].data, { accessTokenUrl: 'http://127.0.0.1:8787/token', clientId: 'cid', clientSecret: 'csecret' });
 c[2].data.value = 'Bearer sk-mock';
+c[3].data.value = 'mock-broker-key';
 fs.writeFileSync(`${work}/creds.json`, JSON.stringify(c));
 const fast = { poller: 8, executor: 5, timers: 20 };
 for (const f of fs.readdirSync('n8n/workflows')) {

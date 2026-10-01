@@ -7,7 +7,9 @@ cd "$(dirname "$0")/.."
 DB=sched_agent_test
 psql -v ON_ERROR_STOP=1 -q -d postgres -c "DROP DATABASE IF EXISTS $DB;"
 psql -v ON_ERROR_STOP=1 -q -d postgres -c "CREATE DATABASE $DB;"
-for f in db/001_schema.sql db/002_functions.sql db/003_seed.sql; do
+# The portal's role (db/004_portal.sql grants to it if it exists). Cluster-wide; harmless to keep.
+psql -v ON_ERROR_STOP=1 -q -d postgres -c "DO \$\$BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sched_portal') THEN CREATE ROLE sched_portal LOGIN; END IF; END\$\$;"
+for f in db/0[0-9][0-9]_*.sql; do
   psql -v ON_ERROR_STOP=1 -q -d "$DB" -f "$f"
 done
 fail=0

@@ -5,7 +5,7 @@ Assumes n8n **2.x** in the `bzb-ai` compose stack on BZB-AI-1, the service named
 ## 1. Prerequisites
 
 - **n8n must NOT be publicly reachable.** The review webhook is token-protected, but it belongs on the tailnet only. (The Funnel `:8443` exposure is closed; keep it that way.)
-- n8n can reach Postgres and LiteLLM by service name on the compose network.
+- n8n can reach Postgres, LiteLLM and the portal's token broker (`sarah-portal:3001`, `docs/09-portal.md`) by service name on the compose network.
 - A LiteLLM virtual key named **Scheduling Agent**, so this agent's usage shows up on its own.
 
 ## 2. Credentials
@@ -21,6 +21,7 @@ Fill in every `FILL IN` in `n8n/credentials.json`:
 | `SchedPostgres001` · Sarah · Postgres | host = Postgres service name, `sched_agent` / password |
 | `SchedGraphApp001` · Sarah · Microsoft Graph | `accessTokenUrl` with your **tenant ID**, `clientId`, `clientSecret` (from `docs/02-m365-setup.md`). Grant type **Client Credentials**, scope `https://graph.microsoft.com/.default` |
 | `SchedLiteLLM0001` · Sarah · LiteLLM key | `Bearer <Scheduling Agent virtual key>` |
+| `SchedPortalKey01` · Sarah · Portal broker key | Header `X-Sarah-Broker-Key`, value = the portal's `PORTAL_BROKER_KEY`. Used only for calendar calls of employees on delegated access; mail never uses it |
 
 The workflows reference these IDs, so import them rather than creating them by hand:
 
@@ -60,6 +61,18 @@ You should now see six workflows named **Sarah · …**, all published. The IDs 
    ```
    If this errors on `response_format`, set `llm_json_schema` to `false` (`docs/03-database.md`). The parser handles plain output, `<think>` blocks, and code fences either way.
 4. **Error workflow:** Settings → *Error workflow* on each Sarah workflow is **Sarah · Errors**. It's set in the JSON; this just confirms it.
+5. **Broker:** from the n8n container, `wget -qO- http://sarah-portal:3001/internal/v1/health` → `{"ok":true}`.
+
+## How calendar calls are routed
+
+| Workflow | Node | When |
+|---|---|---|
+| Processor | **Delegated calendar?** → **Portal: calendar** (POST, broker key) | the thread's employee has `calendar_auth = 'delegated'` |
+| Processor | **Delegated calendar?** → **Graph: calendar** (GET, app-only) | `calendar_auth = 'app'` (Vic until he connects) |
+| Executor | **Via broker?** → **Portal: calendar call** (POST with body) | a hold, hold release or booking for a delegated employee |
+| Executor | **With body?** → the app-only Graph nodes | all mail, and calendar work for `app` employees |
+
+Every broker call is a POST with a JSON body, because n8n ignores expressions in *Send Body* (the reason the app-only path has separate body and no-body nodes). The broker returns Graph's status and body unchanged, so the executor classifies its answers exactly like Graph's. One addition: `409 NeedsReconnect` fails a hold or booking at once, with a specific reason. A hold release waits for the reconnect instead.
 
 ## Code nodes
 

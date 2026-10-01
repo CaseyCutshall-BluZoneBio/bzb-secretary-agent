@@ -5,12 +5,12 @@
 // where code inserts the facts. It never decides times, recipients, or actions.
 
 // Optional style examples for client emails (few-shot). Keep them short and in
-// Sarah's voice, using the same placeholders. Replace with real approved
-// emails after shadow mode.
+// Sarah's voice, using the same placeholders. {EMPLOYEE} becomes the
+// employee's first name. Replace with real approved emails after shadow mode.
 const STYLE_EXAMPLES = [
   {
     purpose: 'intro',
-    body: 'Thanks for the introduction, Vic (moving you to BCC).\n\nHi Dana, I\'m Sarah, Vic\'s scheduling assistant. Would any of these work for a 30-minute Teams call?\n\n{{SLOTS}}\n\nJust reply with the number that suits you, or let me know what works better.',
+    body: 'Thanks for the introduction, {EMPLOYEE} (moving you to BCC).\n\nHi Dana, I\'m Sarah, {EMPLOYEE}\'s scheduling assistant. Would any of these work for a 30-minute Teams call?\n\n{{SLOTS}}\n\nJust reply with the number that suits you, or let me know what works better.',
   },
   {
     purpose: 'new_round',
@@ -18,7 +18,7 @@ const STYLE_EXAMPLES = [
   },
   {
     purpose: 'ack',
-    body: 'Perfect, {{TIME}} it is. I\'ll confirm with Vic and send the calendar invite shortly.',
+    body: 'Perfect, {{TIME}} it is. I\'ll confirm with {EMPLOYEE} and send the calendar invite shortly.',
   },
 ];
 
@@ -108,13 +108,13 @@ const OUTPUT_RULE = 'Respond with a single JSON object that matches the schema. 
 function classifyTriggerPrompt({ employeeFirst, zone, table, from, subject, body }) {
   return {
     system: [
-      `You read an email that ${employeeFirst} sent with Sarah, his AI scheduling assistant, copied.`,
-      'Decide whether he is asking Sarah to schedule a meeting with the other people on the email, and extract only the meeting details he actually stated.',
-      '- is_scheduling_request: true if he asks Sarah (by name or as "my assistant") to find/schedule/set up a time.',
-      '- duration_min: only if he states a length ("45 min", "an hour" → 60). Otherwise null.',
+      `You read an email that ${employeeFirst} sent with Sarah, their AI scheduling assistant, copied.`,
+      'Decide whether they are asking Sarah to schedule a meeting with the other people on the email, and extract only the meeting details they actually stated.',
+      '- is_scheduling_request: true if they ask Sarah (by name or as "my assistant") to find/schedule/set up a time.',
+      '- duration_min: only if they state a length ("45 min", "an hour" → 60). Otherwise null.',
       '- location: "teams" for Teams/video/virtual, "in_person" for in person/at our office/coffee, "phone" for a call by phone. null if not stated.',
-      '- location_detail: an address or place he names, else null.',
-      `- constraints: any window he states. Dates must come from the calendar table (${zone}). Use [] / "any" / null when not stated.`,
+      '- location_detail: an address or place they name, else null.',
+      `- constraints: any window they state. Dates must come from the calendar table (${zone}). Use [] / "any" / null when not stated.`,
       '- topic: a 2–6 word topic for the calendar title if obvious, else null.',
       OUTPUT_RULE,
     ].join('\n'),
@@ -137,7 +137,7 @@ function classifyClientPrompt({ employeeFirst, zone, table, optionsText, from, s
       '- question: they ask something that needs a person (agenda, attendees, prep, pricing, anything not about picking a time).',
       '- thanks: pure acknowledgement with nothing to act on.',
       '- reschedule / cancel: they want to move or cancel an already-agreed meeting.',
-      '- own_link: they send their own booking link (Calendly etc.) or ask Vic to book with them.',
+      `- own_link: they send their own booking link (Calendly etc.) or ask ${employeeFirst} to book with them.`,
       '- delegate: they hand scheduling to someone else ("looping in my assistant who will find a time").',
       '- other: anything else.',
       `proposed_times: specific times they propose, with dates from the calendar table and 24-hour HH:MM exactly as they wrote them. constraints: general windows (dates from the table).`,
@@ -154,11 +154,11 @@ function classifyClientPrompt({ employeeFirst, zone, table, optionsText, from, s
 function classifyConfirmationPrompt({ employeeFirst, zone, table, whenText, body }) {
   return {
     system: [
-      `${employeeFirst} is replying to Sarah (his AI scheduling assistant), who asked him to confirm a client meeting at ${whenText}.`,
+      `${employeeFirst} is replying to Sarah (their AI scheduling assistant), who asked them to confirm a client meeting at ${whenText}.`,
       'decision:',
-      '- yes: he approves ("yes", "book it", "sounds good", "👍", "confirmed").',
-      '- no: he declines that time without suggesting another.',
-      '- alternative: he suggests other times or a window instead.',
+      '- yes: they approve ("yes", "book it", "sounds good", "👍", "confirmed").',
+      '- no: they decline that time without suggesting another.',
+      '- alternative: they suggest other times or a window instead.',
       '- unclear: anything else.',
       `proposed_times / constraints: only for "alternative"; dates from the calendar table (${zone}), 24-hour HH:MM.`,
       OUTPUT_RULE,
@@ -171,8 +171,8 @@ function classifyConfirmationPrompt({ employeeFirst, zone, table, whenText, body
 function classifyEmployeeInThreadPrompt({ employeeFirst, body }) {
   return {
     system: [
-      `${employeeFirst} replied in an email thread where Sarah, his AI scheduling assistant, is arranging a meeting for him.`,
-      '- take_over: he says he will handle it, tells Sarah to stand down, or says the time is already set.',
+      `${employeeFirst} replied in an email thread where Sarah, their AI scheduling assistant, is arranging a meeting for them.`,
+      '- take_over: they say they will handle it, tells Sarah to stand down, or says the time is already set.',
       '- other: anything else.',
       OUTPUT_RULE,
     ].join('\n'),
@@ -182,7 +182,7 @@ function classifyEmployeeInThreadPrompt({ employeeFirst, body }) {
 }
 
 const PURPOSE_GUIDE = {
-  intro: (f) => `This is Sarah's first email on the thread. Briefly thank ${f.employee_first} for the introduction${f.bcc ? " and say you're moving him to BCC" : ''}. Introduce yourself as ${f.employee_first}'s scheduling assistant and ask which option works for a ${f.duration_min}-minute ${f.location}. Put {{SLOTS}} on its own line.`,
+  intro: (f) => `This is Sarah's first email on the thread. Briefly thank ${f.employee_first} for the introduction${f.bcc ? " and say you're moving them to BCC" : ''}. Introduce yourself as ${f.employee_first}'s scheduling assistant and ask which option works for a ${f.duration_min}-minute ${f.location}. Put {{SLOTS}} on its own line.`,
   new_round: () => 'None of the earlier options worked (or the client gave a new window). Offer the new options. Put {{SLOTS}} on its own line.',
   counter_unavailable: () => 'The time the client suggested is not available. Say so briefly and offer these options instead. Put {{SLOTS}} on its own line.',
   taken: () => 'The option the client picked was just taken. Apologize briefly and offer new options. Put {{SLOTS}} on its own line.',
@@ -195,7 +195,7 @@ const PURPOSE_GUIDE = {
 
 function draftPrompt(facts) {
   const examples = STYLE_EXAMPLES.filter((e) => e.purpose === facts.purpose)
-    .map((e) => `Example (${e.purpose}):\n${JSON.stringify({ body: e.body })}`).join('\n\n');
+    .map((e) => `Example (${e.purpose}):\n${JSON.stringify({ body: e.body.replace(/\{EMPLOYEE\}/g, facts.employee_first) })}`).join('\n\n');
   return {
     system: [
       `You write short emails as Sarah, the AI scheduling assistant to ${facts.employee_full} at ${facts.company}.`,

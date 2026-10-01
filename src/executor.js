@@ -1,6 +1,10 @@
 'use strict';
 // Outbox item → Microsoft Graph request(s), and Graph response → outbox report.
-// Sarah's mailbox is the only mailbox this module ever sends from.
+// Sarah's mailbox is the only mailbox this module ever sends from. Mail always
+// uses the app-only credential. Calendar calls for an employee on delegated
+// calendars (item.calendar_auth, resolved at claim time) go to the portal's
+// broker instead, which makes the same Graph call with that employee's token
+// and passes Graph's status and body back unchanged.
 const { DateTime } = require('./luxon');
 const { HOLD_CATEGORY } = require('./slots');
 
@@ -22,11 +26,28 @@ function calendarOwner(item) {
   return `${item.config.graph_base_url}/users/${enc(item.payload.employee_upn)}`;
 }
 
+const CALENDAR_KINDS = new Set(['create_hold', 'delete_hold', 'create_booking']);
+
+function viaBroker(item, req) {
+  if (!CALENDAR_KINDS.has(item.kind) || item.calendar_auth !== 'delegated') return req;
+  const url = `${String(item.config.portal_internal_url || '').replace(/\/+$/, '')}/internal/v1/calendar`;
+  const who = { employee_upn: item.payload.employee_upn };
+  const body = req.method === 'DELETE'
+    ? { ...who, op: 'delete_event', event_id: item.payload.event_id }
+    : { ...who, op: 'create_event', event: req.body };
+  return { method: 'POST', url, body, broker: true };
+}
+
 /**
  * First request for a claimed item, or null when no Graph call is needed
  * (booking waiting for approval in shadow mode).
  */
 function firstRequest(item) {
+  const req = graphRequest(item);
+  return req ? viaBroker(item, req) : req;
+}
+
+function graphRequest(item) {
   const p = item.payload || {};
   const step = item.step;
   if (step === 'await_approval') return null;
@@ -117,6 +138,10 @@ function afterFirst(item, resp) {
 
   const req = firstRequest(item);
   const c = classify(resp);
+  if (!c.ok && req.broker && c.status === 409 && resp.body && resp.body.error && resp.body.error.code === 'NeedsReconnect') {
+    // The employee's token is dead. Retrying won't help; the thread goes back to them.
+    return { report: { ...base, outcome: 'failed', error_code: 'needs_reconnect', error: 'NeedsReconnect: the employee must reconnect their calendar' } };
+  }
   if (!c.ok) {
     if (item.kind === 'delete_hold' && c.status === 404) return { report: { ...base, outcome: 'done', result: { already_gone: true } } };
     if (req.sends && c.status === 404) return { report: { ...base, outcome: 'failed', error: 'draft no longer exists (deleted from Drafts?)' } };

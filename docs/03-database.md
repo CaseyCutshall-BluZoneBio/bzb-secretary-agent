@@ -14,14 +14,30 @@ docker compose exec -T postgres psql -U <superuser> -c "CREATE DATABASE sched_ag
 # 2. edit db/003_seed.sql first: every "FILL IN" (Vic's UPN, office address,
 #    alert address, LiteLLM URL + model alias, n8n tailnet URL)
 
-# 3. apply, in order
-for f in db/001_schema.sql db/002_functions.sql db/003_seed.sql; do
+# 3. the portal's role (docs/09-portal.md), before the migrations so 004 can grant to it
+docker compose exec -T postgres psql -U <superuser> -c "CREATE ROLE sched_portal LOGIN PASSWORD '<from your vault>';"
+
+# 4. apply, in order
+for f in db/0[0-9][0-9]_*.sql; do
   docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < "$f"
 done
 
-# 4. self-test (runs in a transaction and rolls back; every line should say PASS)
-docker compose exec -T postgres psql -U sched_agent -d sched_agent -t -A < db/tests/db_tests.sql | grep -v '^$'
+# 5. self-test (each runs in a transaction and rolls back; every line should say PASS)
+for t in db/tests/*.sql; do
+  docker compose exec -T postgres psql -U sched_agent -d sched_agent -t -A < "$t" | grep -v '^$'
+done
 ```
+
+### Upgrading an existing install
+
+Migrations are numbered and additive. Never edit an applied file; add the next one. `sched.schema_migrations` records what's applied. To upgrade, apply only the new files:
+
+```bash
+docker compose exec -T postgres psql -U sched_agent -d sched_agent -c "SELECT version FROM sched.schema_migrations ORDER BY 1;"
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < db/004_portal.sql
+```
+
+`004_portal.sql` is idempotent (safe to run twice). It leaves existing rows working exactly as before: Vic keeps `calendar_auth = 'app'`. It also revokes `PUBLIC`'s default `EXECUTE` on every `sched` function. n8n connects as the owner, `sched_agent`, so it's unaffected; the portal role can only run `portal_*`.
 
 `btree_gist` is a trusted extension, so the database owner can create it without superuser. It powers the "no two live offers overlap" constraint.
 
@@ -69,8 +85,24 @@ INSERT INTO sched.settings (key, value, note) VALUES ('max_horizon_days', '90', 
 | `outbox_max_age_hours` | 24 | Client-facing mail unsent after this long is cancelled, not sent late |
 | `poller_lease_seconds` | 90 | After a poller crash, the next run can start after this long |
 | `poller_delta_link` | `null` | Graph delta cursor, managed by the poller. `null` = resync |
+| `portal_base_url` | `https://bzb-ai-1.tail9f1964.ts.net:8443` | The public portal URL. Links in emails (reconnect, pause notices) use it. Must match the portal's `PORTAL_BASE_URL` |
+| `portal_internal_url` | `http://sarah-portal:3001` | The token broker as n8n reaches it on the compose network |
+| `portal_admins` | `[]` | UPNs (lowercase) allowed on the portal's admin page, besides `alert_address` |
 
-Per-person rules live in `sched.employees`: working hours, preferred hours, default length and location, gaps, travel buffer, max per day, notice, look-ahead, slots per round, and BCC-after-intro. Values marked `CONFIRM` in `003_seed.sql` are defaults; go through them with Vic.
+Per-person rules live in `sched.employees`: working hours, preferred hours, default length and location, gaps, travel buffer, max per day, notice, look-ahead, slots per round, and BCC-after-intro. Employees edit their own in the portal. Values marked `CONFIRM` in `003_seed.sql` are defaults; go through them with Vic.
+
+Columns added by `004` (`docs/09-portal.md`):
+
+| Column | Meaning |
+|---|---|
+| `calendar_auth` | `app` (legacy RBAC-scoped app-only access) or `delegated` (the employee's own token through the portal's broker) |
+| `calendar_connected_at` | Last successful connect. A `delegated` row without it hasn't connected yet, and Sarah ignores its triggers with a notice |
+| `paused`, `paused_at` | Set by the employee. New requests are ignored with a notice; running threads continue |
+| `needs_reconnect`, `needs_reconnect_since`, `reconnect_reason` | Their token is dead (the reason is an AADSTS code). New requests are ignored with a notice; threads that need the calendar go to `NEEDS_VIC` |
+| `aad_object_id`, `mail` | Entra identity; `mail` (primary SMTP) is matched against `From:` alongside `upn` |
+| `signature_title` | The AI-disclosure line in client emails, e.g. "Scheduling Assistant to Brad Lee (AI)" |
+| `settings_saved_at`, `last_sign_in_at` | Saved own settings (the Outlook prefill then never overwrites them); last portal sign-in |
+| `enrolled` | Admin switch (unchanged). `false` = Sarah ignores them and they lose portal access. Use it for offboarding |
 
 ## Functions the workflows call
 
@@ -87,3 +119,5 @@ All take and return `jsonb`, so each n8n Postgres node is one parameterized stat
 | `outbox_review(id, token, action)` | Review | Shadow-mode approve/reject |
 | `timer_events()` | Timers | Sweeps stuck work, expires offers, releases holds, emits follow-up / stall / reminder events |
 | `set_mode(mode)` | you | Guarded mode switch |
+| `outbox_claim` / `outbox_report` (004 wrappers) | Executor | Calendar items carry the employee's current `calendar_auth`. A `needs_reconnect` failure fails a hold or booking without retries and hands the thread to the employee with a specific reason (no Casey alert). Hold releases for a disconnected employee aren't handed out; they wait until the reconnect. Everything else goes to the originals, kept as `*_base` |
+| `portal_*` | Portal (`sched_portal` role) | `SECURITY DEFINER`: sign-in, connect, settings, pause, the encrypted token cache, `portal_mark_reconnect` (flags once and queues one email), test email, threads, admin overview, sessions |

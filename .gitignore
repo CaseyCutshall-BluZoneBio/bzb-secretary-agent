@@ -3,3 +3,4 @@ node_modules/
 *.local.json
 n8n/credentials.json
 .DS_Store
+portal.env

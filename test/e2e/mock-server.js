@@ -1,16 +1,24 @@
 'use strict';
-// Mock Microsoft Graph + OAuth token endpoint + LiteLLM, for end-to-end tests
-// of the real n8n workflows. Holds a tiny in-memory Exchange: Sarah's inbox,
-// drafts and sent items, and Vic's calendar.
+// Mock Microsoft Graph + OAuth token endpoint + LiteLLM + the portal's token
+// broker, for end-to-end tests of the real n8n workflows. Holds a tiny
+// in-memory Exchange: Sarah's inbox, drafts and sent items, and calendars.
 //
-//   /token                               client-credentials token
+//   /token                               client-credentials token (app-only)
 //   /graph/v1.0/...                      the Graph calls the workflows make
+//   /broker/internal/v1/calendar         mock token broker (docs/09-portal.md):
+//                                        calls Graph with the employee's own
+//                                        token, or 409 NeedsReconnect if revoked
 //   /llm/v1/chat/completions             rule-based fake model
-//   /__test/...                          control API for the test
+//
+// Tokens, like the real tenant: the app token ("mock-token") reaches mail on
+// Sarah and calendars in the app's RBAC scope only (appCalendars, i.e. Vic). A
+// delegated token ("user:<upn>") reaches that user's own calendar and nothing else.
 const http = require('http');
 const { URL } = require('url');
 
-function createMock({ sarah = 'sarah.johnson@bluzonebio.com' } = {}) {
+const BROKER_KEY = 'mock-broker-key';
+
+function createMock({ sarah = 'sarah.johnson@bluzonebio.com', appCalendars = ['vic@bluzonebio.com'] } = {}) {
   const S = {
     inbox: [],          // Graph message objects delivered to Sarah
     deltaIndex: 0,      // how many inbox items the poller has seen via delta
@@ -22,6 +30,10 @@ function createMock({ sarah = 'sarah.johnson@bluzonebio.com' } = {}) {
     llmCalls: [],
     llmOverride: null,  // (schemaName, userText) → content string | undefined
     failNext: {},       // 'METHOD path-regex' → status code (one-shot)
+    appCalendars: new Set(appCalendars),
+    brokerCalls: [],    // every request n8n made to the broker
+    revoked: new Set(), // employees whose refresh token is dead
+    onReconnect: null,  // async (upn) → called like the real broker's portal_mark_reconnect
     seq: 1,
   };
   const newId = (p) => `${p}-${S.seq++}`;
@@ -87,7 +99,21 @@ function createMock({ sarah = 'sarah.johnson@bluzonebio.com' } = {}) {
   async function graph(req, res, path, url) {
     const body = await readBody(req);
     S.requests.push({ method: req.method, path, query: url.searchParams, auth: req.headers.authorization, prefer: req.headers.prefer, body });
-    if (req.headers.authorization !== 'Bearer mock-token') return json(res, 401, { error: { code: 'InvalidAuthenticationToken', message: 'bad token' } });
+    const auth = req.headers.authorization || '';
+    const segs = path.split('/').filter(Boolean).map(decodeURIComponent);
+    const target = (segs[1] || '').toLowerCase();
+    const calendarCall = segs[2] === 'calendarView' || segs[2] === 'events';
+    if (auth === 'Bearer mock-token') {
+      if (calendarCall && !S.appCalendars.has(target)) {
+        return json(res, 403, { error: { code: 'ErrorAccessDenied', message: 'Access is denied (outside the app\'s RBAC scope)' } });
+      }
+    } else if (auth.startsWith('Bearer user:')) {
+      if (!calendarCall || auth.slice('Bearer user:'.length) !== target) {
+        return json(res, 403, { error: { code: 'ErrorAccessDenied', message: 'a delegated token reaches only its own calendar' } });
+      }
+    } else {
+      return json(res, 401, { error: { code: 'InvalidAuthenticationToken', message: 'bad token' } });
+    }
     for (const [k, code] of Object.entries(S.failNext)) {
       const [m, re] = k.split(' ');
       if (m === req.method && new RegExp(re).test(path)) { delete S.failNext[k]; return json(res, code, { error: { code: 'Mock', message: 'injected failure' } }); }
@@ -166,6 +192,35 @@ function createMock({ sarah = 'sarah.johnson@bluzonebio.com' } = {}) {
     return json(res, 400, { error: { code: 'MockUnknown', message: `${req.method} ${path}` } });
   }
 
+  // ------------------------------------------------------------- broker ----
+  // Same contract as portal/src/broker.js: the employee's own token, Graph's
+  // answer passed back unchanged.
+  async function broker(req, res) {
+    const body = await readBody(req);
+    if (req.headers['x-sarah-broker-key'] !== BROKER_KEY) return json(res, 401, { error: { code: 'BrokerAuth', message: 'bad key' } });
+    S.brokerCalls.push(body);
+    const upn = String((body && body.employee_upn) || '').toLowerCase();
+    if (S.revoked.has(upn)) {
+      if (S.onReconnect) await S.onReconnect(upn);
+      return json(res, 409, { error: { code: 'NeedsReconnect', message: 'the employee must reconnect their calendar' } });
+    }
+    const base = `/users/${encodeURIComponent(upn)}`;
+    let method = 'GET';
+    let path;
+    let payload;
+    if (body.op === 'calendar_view') path = `${base}/calendarView?startDateTime=${encodeURIComponent(body.start)}&endDateTime=${encodeURIComponent(body.end)}`;
+    else if (body.op === 'create_event') { method = 'POST'; path = `${base}/events`; payload = body.event; }
+    else if (body.op === 'delete_event') { method = 'DELETE'; path = `${base}/events/${encodeURIComponent(body.event_id)}`; }
+    else return json(res, 400, { error: { code: 'BadRequest', message: 'op' } });
+    const r = await fetch(`http://127.0.0.1:${S.port}/graph/v1.0${path}`, {
+      method, headers: { Authorization: `Bearer user:${upn}`, 'Content-Type': 'application/json' },
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
+    const text = await r.text();
+    res.writeHead(r.status, { 'Content-Type': 'application/json' });
+    return res.end(text);
+  }
+
   // --------------------------------------------------------- test control ----
   function deliver(msg) {
     const id = newId('MSG');
@@ -200,6 +255,7 @@ function createMock({ sarah = 'sarah.johnson@bluzonebio.com' } = {}) {
         return json(res, 200, { access_token: 'mock-token', token_type: 'Bearer', expires_in: 3600 });
       }
       if (p.startsWith('/graph/v1.0/')) return await graph(req, res, p.slice('/graph/v1.0'.length), url);
+      if (p === '/broker/internal/v1/calendar' && req.method === 'POST') return await broker(req, res);
       if (p === '/llm/v1/chat/completions') {
         const body = await readBody(req);
         if (req.headers.authorization !== 'Bearer sk-mock') return json(res, 401, { error: { message: 'bad key' } });
@@ -219,4 +275,4 @@ function createMock({ sarah = 'sarah.johnson@bluzonebio.com' } = {}) {
   };
 }
 
-module.exports = { createMock };
+module.exports = { createMock, BROKER_KEY };

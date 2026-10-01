@@ -1,7 +1,7 @@
 'use strict';
 // Who is this email from, and what kind of event is it? Pure function of the
 // context loaded from Postgres. No model involved: authorization is code.
-const { lower, isInternal, setting } = require('./util');
+const { lower, isInternal, setting, delegated } = require('./util');
 
 const AUTO_SUBJECT = /^(automatic reply|auto(matic)?[- ]?reply|out of (the )?office|undeliverable|delivery (status notification|has failed)|mail delivery (failed|subsystem)|returned mail|read:|not read:)/i;
 const DAEMON_FROM = /^(mailer-daemon|postmaster|no-?reply|donotreply|do-not-reply)@/i;
@@ -22,11 +22,23 @@ function isAutoReply(msg) {
  *   skip                 — already processed / not found
  *   ignore               — log it and do nothing ({ disposition })
  *   new_trigger          — enrolled employee CC'd Sarah on a new thread
+ *                          (ignored with a notice while they're paused or
+ *                          their delegated calendar isn't connected)
  *   client_reply         — someone outside BZB replied on a known thread
  *   employee_confirmation — employee answered Sarah's confirmation request
  *   employee_in_thread   — employee wrote in the client thread itself
  *   timer                — follow-up / stall / reminder event
  */
+// A new request from an employee, unless they can't use Sarah right now.
+// Threads already running are not affected by either check.
+function newTrigger(employee, extra = {}) {
+  if (employee.paused) return { kind: 'ignore', disposition: 'ignored_paused', notice: 'paused', employee };
+  if (delegated(employee) && (!employee.calendar_connected_at || employee.needs_reconnect)) {
+    return { kind: 'ignore', disposition: 'ignored_needs_reconnect', notice: 'not_connected', employee };
+  }
+  return { kind: 'new_trigger', employee, ...extra };
+}
+
 function route(ctx) {
   if (!ctx || ctx.skip) return { kind: 'skip', reason: ctx && ctx.reason };
 
@@ -52,7 +64,7 @@ function route(ctx) {
   if (from === sarah) return { kind: 'ignore', disposition: 'ignored_self' };
   if (isAutoReply(msg)) return { kind: 'ignore', disposition: 'ignored_autoreply', attach: !!thread };
 
-  const employee = (ctx.employees || []).find((e) => lower(e.upn) === from && e.enrolled);
+  const employee = (ctx.employees || []).find((e) => e.enrolled && (lower(e.upn) === from || (e.mail && lower(e.mail) === from)));
 
   if (employee) {
     const auth = lower((msg.headers || {}).auth_as);
@@ -73,13 +85,13 @@ function route(ctx) {
       // new meeting ("Sarah, find us a follow-up time"). The trigger
       // classifier decides; a plain "thanks" is ignored there.
       if (['BOOKED', 'CLOSED', 'STALLED'].includes(thread.state)) {
-        return addressed ? { kind: 'new_trigger', employee, reuseConversation: true }
+        return addressed ? newTrigger(employee, { reuseConversation: true })
                          : { kind: 'ignore', disposition: 'ignored_thread_finished', attach: true };
       }
       return { kind: 'employee_in_thread', employee };
     }
     if (!addressed) return { kind: 'ignore', disposition: 'ignored_not_addressed' };
-    return { kind: 'new_trigger', employee };
+    return newTrigger(employee);
   }
 
   if (isInternal(from, domains)) {

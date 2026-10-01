@@ -6,6 +6,19 @@ Each stage has a checklist. Don't move on until it's all ticked. Going back is a
 SELECT sched.set_mode('off');   -- kill switch: poller, executor and timers stop on their next run
 ```
 
+## Stage 0 · Portal (before or alongside Stage 1)
+
+Set up the portal per `docs/09-portal.md`: the Entra app with assignment required, the `Sarah users` group, `004_portal.sql`, the container, the broker credential in n8n, and Funnel on 8443. Then:
+
+- [ ] `tailscale funnel status` shows only Open WebUI on 443 and `:8443 → 127.0.0.1:3000`
+- [ ] From outside the tailnet (phone on mobile data): the portal's sign-in page loads; `/settings` redirects to `/login`; `:3001` doesn't answer
+- [ ] An account **not** in `Sarah users` can't sign in, and sees the generic error
+- [ ] You (in the group) sign in, connect your calendar, and see your Outlook hours prefilled; the admin page shows you as "OK"
+- [ ] "Send me a test" in `dry_run` says it won't be sent; in `shadow`/`live` it arrives from Sarah
+- [ ] Pause yourself, CC Sarah: you get "Paused, so I didn't start". Resume
+
+You're now an enrolled test employee for Stage 2. No SQL or RBAC changes needed.
+
 ## Stage 1 · `dry_run`: decisions without actions
 
 Sarah reads mail and decides, but **nothing is sent and nothing touches Vic's calendar**. Outbox rows are written as `skipped`, so you can read exactly what she *would* have done.
@@ -41,7 +54,7 @@ Check the offered times against Vic's real calendar by hand for the first few.
 
 ## Stage 2 · Test harness (still `dry_run`, then `shadow`)
 
-Create 2–3 throwaway Gmail accounts as fake clients. Vic (or you, enrolled as a test employee: copy Vic's `employees` row with your UPN and add your mailbox to the calendar scope) starts threads with them. Work through these:
+Create 2–3 throwaway Gmail accounts as fake clients. Vic (or you, enrolled through the portal in Stage 0) starts threads with them. Work through these:
 
 | # | Scenario | Expected |
 |---|---|---|
@@ -75,6 +88,11 @@ Create 2–3 throwaway Gmail accounts as fake clients. Vic (or you, enrolled as 
 | 28 | Vic replies in the client thread "I'll take it from here" | Thread CLOSED, holds released, Sarah silent |
 | 29 | Put a meeting on Vic's calendar over an offered slot, then the client picks that slot | "That time was just taken" + new options (two clients can never be offered overlapping times in the first place) |
 | 30 | Something lands on Vic's calendar after he said YES | Hand-off: "now conflicts" |
+| 31 | A delegated employee (you) runs scenarios 1, 6 and 22 | Holds and the booking appear on **your** calendar; the invite comes from you; the signature names you |
+| 32 | Paused employee CCs Sarah | "Paused, so I didn't start"; no client email; running threads continue |
+| 33 | Revoke your portal sessions (Entra → your user → Revoke sessions), then have the client reply | One "Action needed: reconnect" email; the thread goes to you with "lost access to your calendar"; the client gets nothing. Reconnect in the portal: leftover holds disappear |
+| 34 | Disconnected employee CCs Sarah | "Reconnect your calendar, so I didn't start" |
+| 35 | Vic signs in and connects | Admin page shows him `delegated` / OK; his next thread works the same (then remove `CustomAttribute11`, `docs/09-portal.md` §7) |
 
 For 26 and 27, don't wait days. Age the thread instead:
 
@@ -120,7 +138,8 @@ Go live when all of these are true:
 - [ ] No rejected drafts in the last 10
 - [ ] No `failed` outbox items you don't understand (`SELECT * FROM sched.outbox WHERE status = 'failed'`)
 - [ ] Vic has the one-pager (`docs/vic-guide.md`) and has used it once
-- [ ] The Graph secret's expiry is on your calendar
+- [ ] The Graph secret's expiry is on your calendar, and so is the portal app's
+- [ ] Every enrolled employee shows "OK" on the portal's admin page
 
 ```sql
 SELECT sched.set_mode('live');

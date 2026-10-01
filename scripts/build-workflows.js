@@ -3,10 +3,10 @@
 // anything in src/ (logic or prompts). Never hand-edit the generated JSON.
 //
 // Six workflows, all with fixed IDs so they can reference each other and the
-// three credentials (created from n8n/credentials.template.json):
+// four credentials (created from n8n/credentials.template.json):
 //   Sarah · Poller     every minute: Graph delta on Sarah's Inbox → ingest → processor
 //   Sarah · Processor  one email or timer event → decision → apply_plan → kick executor
-//   Sarah · Executor   every minute + on demand: outbox → Graph → report
+//   Sarah · Executor   every minute + on demand: outbox → Graph (or the portal broker) → report
 //   Sarah · Timers     every 15 min: housekeeping + follow-up / stall / reminder events
 //   Sarah · Review     shadow-mode approve/reject page (tailnet only)
 //   Sarah · Errors     error workflow for all of the above: email Casey
@@ -35,6 +35,7 @@ const CRED = {
   postgres: { id: 'SchedPostgres001', name: 'Sarah · Postgres (sched_agent)' },
   graph: { id: 'SchedGraphApp001', name: 'Sarah · Microsoft Graph (app-only)' },
   litellm: { id: 'SchedLiteLLM0001', name: 'Sarah · LiteLLM key' },
+  portal: { id: 'SchedPortalKey01', name: 'Sarah · Portal broker key' },
 };
 
 // Deterministic UUIDs so rebuilding without changes produces identical files.
@@ -53,6 +54,9 @@ function node(wf, name, type, typeVersion, position, parameters, extra = {}) {
 const pgCred = { postgres: { id: CRED.postgres.id, name: CRED.postgres.name } };
 const graphCred = { oAuth2Api: { id: CRED.graph.id, name: CRED.graph.name } };
 const llmCred = { httpHeaderAuth: { id: CRED.litellm.id, name: CRED.litellm.name } };
+// The portal's token broker: a shared-secret header, on the compose network only.
+const portalCred = { httpHeaderAuth: { id: CRED.portal.id, name: CRED.portal.name } };
+const CREDS = { llm: llmCred, portal: portalCred, graph: graphCred };
 
 function pg(wf, name, position, query, params, extra = {}) {
   const options = params ? { queryReplacement: `={{ ${params} }}` } : {};
@@ -90,7 +94,7 @@ function http(wf, name, position, { method, url, headers, body, cred, timeout = 
     method,
     url,
     authentication: 'genericCredentialType',
-    genericAuthType: cred === 'llm' ? 'httpHeaderAuth' : 'oAuth2Api',
+    genericAuthType: cred === 'graph' ? 'oAuth2Api' : 'httpHeaderAuth',
     sendHeaders: !!headers,
     options: { timeout, ...RESPONSE },
   };
@@ -104,7 +108,7 @@ function http(wf, name, position, { method, url, headers, body, cred, timeout = 
     p.jsonBody = `={{ ${body} }}`;
   }
   return node(wf, name, 'n8n-nodes-base.httpRequest', 4.2, position, p,
-    { credentials: cred === 'llm' ? llmCred : graphCred, onError: 'continueRegularOutput' });
+    { credentials: CREDS[cred], onError: 'continueRegularOutput' });
 }
 
 function execWf(wf, name, position, target, { wait = true, each = true, continueOnFail = false } = {}) {
@@ -258,28 +262,36 @@ return { json: lib.decide.start($json.ctx) };`),
 const S = $('1 · Route').item.json;
 return { json: lib.decide.interpret(S, httpResult($json)) };`),
     ifNode(W, 'Calendar?', [1320, 300], '$json.calendar != null'),
-    http(W, 'Graph: calendar', [1540, 180], {
+    // Delegated employees: the portal's broker reads the calendar with their own
+    // token (never seen here). Everyone else: app-only Graph, as before.
+    ifNode(W, 'Delegated calendar?', [1540, 180], "$json.calendar.via === 'broker'"),
+    http(W, 'Portal: calendar', [1760, 60], {
+      method: 'POST', url: '={{ $json.calendar.url }}', body: 'JSON.stringify($json.calendar.body)', cred: 'portal',
+    }),
+    http(W, 'Graph: calendar', [1760, 240], {
       method: 'GET', url: '={{ $json.calendar.url }}', headers: [['Prefer', '={{ $json.calendar.prefer }}']], cred: 'graph',
     }),
-    code(W, '3 · Act', [1760, 300], `${HTTP_RESULT}
+    code(W, '3 · Act', [1980, 300], `${HTTP_RESULT}
 const S = $('2 · Interpret').item.json;
 return { json: lib.decide.act(S, httpResult($json)) };`),
-    ifNode(W, 'Draft?', [1980, 300], '$json.llm != null'),
-    http(W, 'LLM: draft', [2200, 180], {
+    ifNode(W, 'Draft?', [2200, 300], '$json.llm != null'),
+    http(W, 'LLM: draft', [2420, 180], {
       method: 'POST', url: '={{ $json.llm.url }}', body: 'JSON.stringify($json.llm.body)', cred: 'llm', timeout: 180000,
     }),
-    code(W, '4 · Finish', [2420, 300], `${HTTP_RESULT}
+    code(W, '4 · Finish', [2640, 300], `${HTTP_RESULT}
 const S = $('3 · Act').item.json;
 return { json: lib.decide.finish(S, httpResult($json)) };`),
-    ifNode(W, 'Plan?', [2640, 300], '$json.plan != null'),
-    pg(W, 'Apply plan', [2860, 300], `SELECT sched.apply_plan($1::jsonb) AS result;`, `[ JSON.stringify($json.plan) ]`),
-    execWf(W, 'Kick executor', [3080, 300], 'executor', { wait: false, each: false }),
+    ifNode(W, 'Plan?', [2860, 300], '$json.plan != null'),
+    pg(W, 'Apply plan', [3080, 300], `SELECT sched.apply_plan($1::jsonb) AS result;`, `[ JSON.stringify($json.plan) ]`),
+    execWf(W, 'Kick executor', [3300, 300], 'executor', { wait: false, each: false }),
   ];
   const pairs = [
     ['Event in', 'Load context'], ['Load context', '1 · Route'], ['1 · Route', 'Classify?'],
     ['Classify?', 'LLM: classify', 0], ['Classify?', '2 · Interpret', 1], ['LLM: classify', '2 · Interpret'],
     ['2 · Interpret', 'Calendar?'],
-    ['Calendar?', 'Graph: calendar', 0], ['Calendar?', '3 · Act', 1], ['Graph: calendar', '3 · Act'],
+    ['Calendar?', 'Delegated calendar?', 0], ['Calendar?', '3 · Act', 1],
+    ['Delegated calendar?', 'Portal: calendar', 0], ['Delegated calendar?', 'Graph: calendar', 1],
+    ['Portal: calendar', '3 · Act'], ['Graph: calendar', '3 · Act'],
     ['3 · Act', 'Draft?'],
     ['Draft?', 'LLM: draft', 0], ['Draft?', '4 · Finish', 1], ['LLM: draft', '4 · Finish'],
     ['4 · Finish', 'Plan?'], ['Plan?', 'Apply plan', 0], ['Apply plan', 'Kick executor'],
@@ -301,29 +313,36 @@ function executor() {
 const item = $json.item;
 return { json: { item, req: lib.executor.firstRequest(item) } };`, { lib: 'executor' }),
     ifNode(W, 'Call Graph?', [660, 300], '$json.req != null'),
+    // Calendar work for a delegated employee goes to the portal's broker, which
+    // calls Graph with that employee's token. Always a POST with a JSON body.
+    ifNode(W, 'Via broker?', [880, 180], '$json.req.broker === true'),
+    http(W, 'Portal: calendar call', [1100, -60], {
+      method: 'POST', url: '={{ $json.req.url }}', body: 'JSON.stringify($json.req.body)', cred: 'portal',
+    }),
     // Two nodes on purpose: n8n ignores an expression in "Send Body", so a
     // single dynamic node would POST with an empty body.
-    ifNode(W, 'With body?', [880, 180], '$json.req.body != null'),
-    http(W, 'Graph: POST with body', [1100, 60], {
+    ifNode(W, 'With body?', [1100, 180], '$json.req.body != null'),
+    http(W, 'Graph: POST with body', [1320, 60], {
       method: 'POST', url: '={{ $json.req.url }}', body: 'JSON.stringify($json.req.body)', cred: 'graph',
     }),
-    http(W, 'Graph: call without body', [1100, 240], {
+    http(W, 'Graph: call without body', [1320, 240], {
       method: '={{ $json.req.method }}', url: '={{ $json.req.url }}', cred: 'graph',
     }),
-    code(W, 'After call', [1320, 300], `
+    code(W, 'After call', [1540, 300], `
 const b = $('Build request').item.json;
 const resp = $json.item && $json.req !== undefined ? null : $json;   // IF false branch passes the build output
 return { json: { item: b.item, ...lib.executor.afterFirst(b.item, resp) } };`, { lib: 'executor' }),
-    ifNode(W, 'Send draft?', [1540, 300], '$json.next != null'),
-    http(W, 'Graph: send', [1760, 180], { method: 'POST', url: '={{ $json.next.url }}', cred: 'graph' }),
-    code(W, 'After send', [1980, 180], `
+    ifNode(W, 'Send draft?', [1760, 300], '$json.next != null'),
+    http(W, 'Graph: send', [1980, 180], { method: 'POST', url: '={{ $json.next.url }}', cred: 'graph' }),
+    code(W, 'After send', [2200, 180], `
 const a = $('After call').item.json;
 return { json: { report: lib.executor.afterSecond(a.item, a, $json) } };`, { lib: 'executor' }),
-    pg(W, 'Report', [2200, 300], `SELECT sched.outbox_report($1::jsonb) AS r;`, `[ JSON.stringify($json.report) ]`),
+    pg(W, 'Report', [2420, 300], `SELECT sched.outbox_report($1::jsonb) AS r;`, `[ JSON.stringify($json.report) ]`),
   ];
   const pairs = [
     ['Every minute', 'Claim'], ['Kicked', 'Claim'], ['Claim', 'Build request'], ['Build request', 'Call Graph?'],
-    ['Call Graph?', 'With body?', 0], ['Call Graph?', 'After call', 1],
+    ['Call Graph?', 'Via broker?', 0], ['Call Graph?', 'After call', 1],
+    ['Via broker?', 'Portal: calendar call', 0], ['Via broker?', 'With body?', 1], ['Portal: calendar call', 'After call'],
     ['With body?', 'Graph: POST with body', 0], ['With body?', 'Graph: call without body', 1],
     ['Graph: POST with body', 'After call'], ['Graph: call without body', 'After call'],
     ['After call', 'Send draft?'], ['Send draft?', 'Graph: send', 0], ['Send draft?', 'Report', 1],

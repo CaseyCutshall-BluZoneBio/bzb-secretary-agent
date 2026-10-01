@@ -42,6 +42,7 @@ Two protections apply on the way back:
 | `[Sarah] Ignored an email (ignored_model_unavailable)` | The model was down when Vic CC'd Sarah, so nothing was started | Check LiteLLM, then tell Vic to CC Sarah again, or start it yourself |
 | `[Sarah] Booking created on a NEEDS_VIC thread` | A booking finished after the thread was handed to Vic | Ask Vic whether to keep or cancel the event |
 | `[Sarah review] #n …` | Shadow mode: approve or reject | — |
+| `[Sarah] <name>'s account looks disabled or deleted` | The portal's token refresh failed with AADSTS50057/50034 | If they left BZB, offboard them (below). Their open threads are listed in the alert |
 
 ## Common situations
 
@@ -73,17 +74,43 @@ The poller then resyncs, and anything older than `processing_start_at` is logged
 **Model misbehaving** (lots of `draft_source = template`, or escalations saying "couldn't interpret"):
 Check the LiteLLM logs for the Scheduling Agent key. Look at `sched.messages.model_raw` for the raw output. If the model rejects `response_format`, set `llm_json_schema` to `false`. To take the model out of client wording entirely while you fix it, set `llm_drafting` to `false`: templates only, classification unchanged.
 
+## Portal and delegated calendars
+
+**Someone says "Sarah lost access to my calendar".** They got "Action needed: reconnect" once. They reconnect at the portal's `/connect` (two clicks). On the admin page their row goes back to "OK". Threads that hit the dead token are already `NEEDS_VIC` and stay theirs; Sarah doesn't resume them. Their "Hold" blocks stay until they reconnect: the releases wait in the outbox as `pending` and run by themselves afterwards. Why it died is in `employees.reconnect_reason` (an AADSTS code). If it recurs on a schedule, check Conditional Access sign-in frequency (`docs/09-portal.md` §9).
+
+```sql
+SELECT upn, calendar_auth, calendar_connected_at, needs_reconnect, needs_reconnect_since, reconnect_reason, paused
+  FROM sched.employees ORDER BY upn;
+```
+
+**Everyone's calendar fails at once.** Look at the portal log (`docker compose logs sarah-portal`) for `token_unavailable … app_problem: true`. That's the portal's client secret (expired or wrong), not the employees' tokens, and nobody was flagged. Rotate it (`docs/09-portal.md` §8).
+
+**Portal down.** `docker compose ps sarah-portal`, then the logs. While it's down, delegated employees' calendar reads fail, so their incoming client replies escalate as calendar errors, and the executor retries holds and bookings 3×. App-only employees are unaffected. Bring it back quickly; there's nothing to replay.
+
+**Offboarding (someone leaves BZB).**
+1. Remove them from `Sarah users` in Entra (portal sign-in stops).
+2. `UPDATE sched.employees SET enrolled = false WHERE upn = '<upn>';` (Sarah ignores their email and their portal session ends).
+3. `DELETE FROM sched.portal_tokens WHERE employee_id = (SELECT id FROM sched.employees WHERE upn = '<upn>');`
+   and drop the hold releases that will never run: `UPDATE sched.outbox SET status = 'cancelled', last_error = 'offboarded' WHERE kind = 'delete_hold' AND status = 'pending' AND payload->>'employee_upn' = '<upn>';`
+4. Hand their open threads to someone: `SELECT * FROM sched.status WHERE employee_id = …` (close each by hand, as above, after telling the client).
+
+**Turn the public portal off** (Sarah keeps running): `sudo tailscale funnel --https=8443 off`. Turn it back on with `sudo tailscale funnel --bg --https=8443 http://127.0.0.1:3000`.
+
 ## Changing behavior
 
 | Change | How |
 |---|---|
 | Timing, rounds, holds | `UPDATE sched.settings …` (applies immediately) |
-| Vic's hours, gaps, defaults | `UPDATE sched.employees … WHERE upn = 'vic@bluzonebio.com'` |
+| An employee's hours, gaps, defaults | They change them in the portal's Settings (or `UPDATE sched.employees …`) |
 | Wording style | `STYLE_EXAMPLES` / `PURPOSE_GUIDE` in `src/prompts.js`, then `npm test && npm run build`, re-import (`docs/04-n8n-setup.md` §3) |
 | Fallback templates | `TEMPLATES` in `src/draft.js` (the tests check that every template passes the validator) |
 | Routing / decisions | `src/route.js`, `src/decide.js`. Add a test in `test/unit/decide.test.js` first |
 
-## Rotating the Graph client secret
+## Rotating secrets
+
+The portal's secrets (encryption key, client secret, broker key, session secret): `docs/09-portal.md` §8.
+
+### The Graph client secret (app-only)
 
 1. Entra → the app → Certificates & secrets → **New client secret**. Keep the old one for now.
 2. n8n → Credentials → **Sarah · Microsoft Graph (app-only)** → paste the new secret → Save.
@@ -96,8 +123,7 @@ After upgrading, run the end-to-end suite locally against the new version (`docs
 
 ## Adding an employee
 
-1. Put their calendar in scope: `docs/02-m365-setup.md`, "Adding another employee later".
-2. Insert their row into `sched.employees`. Copy Vic's and adjust the hours and gaps.
-3. Give them `docs/vic-guide.md`, with their name in place of Vic's.
+1. Add them to the **Sarah users** group in Entra.
+2. Send them the portal link (`https://bzb-ai-1.tail9f1964.ts.net:8443`) and `docs/vic-guide.md`.
 
-Confirmation emails, holds and bookings all use the thread's own employee.
+They sign in, connect their calendar, check their settings, and can CC Sarah straight away. Confirmation emails, holds and bookings all use the thread's own employee, and client emails are signed with their name.
