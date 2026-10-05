@@ -30,6 +30,14 @@ function formatSlotList(offers, zone) {
     .join('\n');
 }
 
+// The agreed time said back in a sentence: "Thursday, October 15 at 3:00 PM EDT".
+// (The numbered options and the final confirmation keep the full form with
+// the UTC offset.)
+function formatSpoken(startIso, zone) {
+  const s = dt(startIso, zone);
+  return `${s.toFormat('cccc, LLLL d')} at ${s.toFormat('h:mm a')} ${s.toFormat('ZZZZ')}`;
+}
+
 // Short form for subjects: "Tue Oct 6, 2:00 PM EDT"
 function formatSlotShort(startIso, zone) {
   const s = dt(startIso, zone);
@@ -73,4 +81,4 @@ function locationPhrase(locationType, locationText) {
   return 'a Teams call';
 }
 
-module.exports = { dt, formatSlot, formatSlotList, formatSlotShort, calendarTable, offsetLabel, locationPhrase, askedWindowText, askedTimeText };
+module.exports = { dt, formatSpoken, formatSlot, formatSlotList, formatSlotShort, calendarTable, offsetLabel, locationPhrase, askedWindowText, askedTimeText };

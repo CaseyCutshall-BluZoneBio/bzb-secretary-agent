@@ -771,7 +771,7 @@ function acceptFlow(S, slot, flags) {
 
   const when = F.formatSlot(slot.start, slot.end, emp.timezone);
   outboxInternal(S, 'vic_confirmation', D.vicConfirmationMail(ctx, emp, threadView(S), slot, when, flags, tidToken(S)));
-  queueClientEmail(S, 'ack', { timeText: when });
+  queueClientEmail(S, 'ack', { timeText: F.formatSpoken(slot.start, emp.timezone) });
 }
 
 function doAcceptOffer(S, a, busy) {

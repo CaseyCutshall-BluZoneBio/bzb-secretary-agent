@@ -250,9 +250,19 @@ function pickSpread(list, n) {
     }
     chosen.push(pick);
   }
-  for (const c of [...list].sort(byScoreThenTime)) {
-    if (chosen.length >= n) break;
-    if (!chosen.includes(c) && !chosen.some((x) => overlaps(x, c))) chosen.push(c);
+  // Fill from the rest, best score first. On a day that already has an
+  // option, prefer the time furthest from it: a person offers 9:30, 11:00 and
+  // 2:30, not 9:30, 10:00 and 10:30.
+  const sameDayGap = (c) => {
+    const same = chosen.filter((x) => x.day === c.day);
+    return same.length ? Math.min(...same.map((x) => Math.abs(x.startMs - c.startMs))) : 1e15;
+  };
+  while (chosen.length < n) {
+    const rest = list.filter((c) => !chosen.includes(c) && !chosen.some((x) => overlaps(x, c)));
+    if (!rest.length) break;
+    const top = Math.max(...rest.map((c) => c.score));
+    const best = rest.filter((c) => c.score === top).sort((a, b) => sameDayGap(b) - sameDayGap(a) || a.startMs - b.startMs);
+    chosen.push(best[0]);
   }
   return chosen;
 }

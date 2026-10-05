@@ -217,3 +217,14 @@ test('a window starting past max_horizon_days offers nothing; checkSlot refuses 
   assert.equal(SL.checkSlot(p, '2026-11-05T15:00:00Z', '2026-11-05T15:30:00Z', 'propose').reason, 'beyond_horizon');
   assert.ok(SL.checkSlot(p, '2026-11-03T15:00:00Z', '2026-11-03T15:30:00Z', 'propose').ok);
 });
+
+test('several options on one day are spread out, not back to back', () => {
+  const r = SL.pickSlots(base({ constraints: { earliest_date: '2026-10-15', latest_date: '2026-10-15', days_of_week: [], time_of_day: 'any' } }));
+  assert.equal(r.slots.length, 3);
+  const mins = r.slots.map((s) => { const d = local(s.start); return d.hour * 60 + d.minute; }).sort((a, b) => a - b);
+  assert.ok(mins[1] - mins[0] >= 90 && mins[2] - mins[1] >= 90, `spread: ${mins.join(', ')}`);
+  const pm = SL.pickSlots(base({ constraints: { earliest_date: '2026-10-15', latest_date: '2026-10-15', days_of_week: [], time_of_day: 'afternoon' } }));
+  const pmMins = pm.slots.map((s) => { const d = local(s.start); return d.hour * 60 + d.minute; }).sort((a, b) => a - b);
+  assert.ok(pmMins.every((m) => m >= 12 * 60));
+  assert.ok(pmMins[1] - pmMins[0] >= 60 && pmMins[2] - pmMins[1] >= 60, `afternoon spread: ${pmMins.join(', ')}`);
+});

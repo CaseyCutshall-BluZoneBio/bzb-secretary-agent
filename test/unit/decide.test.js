@@ -138,7 +138,7 @@ test('client accepts option 2 → AWAITING_VIC, others superseded + holds releas
 
   const ack = plan.outbox.find((o) => o.kind === 'reply');
   assert.equal(ack.purpose, 'ack');
-  assert.match(ack.payload.body_text, /Wednesday, October 7, 10:00–10:30 AM EDT/);
+  assert.match(ack.payload.body_text, /Wednesday, October 7 at 10:00 AM EDT/);
   assert.deepEqual(ack.payload.bcc, [], 'Vic is not re-added after the intro');
   assert.equal(plan.thread.set.touch_inbound, true);
 });
