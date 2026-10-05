@@ -18,8 +18,8 @@ services:
       PGDATABASE: sched_agent
       PGUSER: sched_portal
     ports:
-      # Public UI: loopback only. Tailscale Funnel maps :10000 → 127.0.0.1:3000.
-      - "127.0.0.1:3000:3000"
+      # Public UI: loopback only. Tailscale Funnel maps :10000 → 127.0.0.1:3100 (host port 3000 is Open WebUI).
+      - "127.0.0.1:3100:3000"
       # 3001 (the token broker) is deliberately NOT published. n8n reaches it
       # as http://sarah-portal:3001 on bzb-ai_default (n8n's own stack joins
       # that network; docs/04-n8n-setup.md §1).

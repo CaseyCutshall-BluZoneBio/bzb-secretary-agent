@@ -124,10 +124,10 @@ if ! (cd "$BZB_DIR" && docker compose ps --status running --services 2>/dev/null
   skip "portal" "sarah-portal isn't running yet (docs/09-portal.md §3)"
 else
   ok "portal container running"
-  c=$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/login)
-  [ "$c" = "200" ] && ok "portal UI answers on 127.0.0.1:3000" || bad "portal UI: HTTP $c" "docker compose logs sarah-portal | tail"
+  c=$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/login)
+  [ "$c" = "200" ] && ok "portal UI answers on 127.0.0.1:3100" || bad "portal UI: HTTP $c" "docker compose logs sarah-portal | tail"
   if curl -s -m 3 -o /dev/null http://127.0.0.1:3001/internal/v1/health; then
-    bad "broker port 3001 is published on the host" "remove any 3001 port mapping: only 127.0.0.1:3000:3000 may be published"
+    bad "broker port 3001 is published on the host" "remove any 3001 port mapping: only 127.0.0.1:3100:3000 may be published"
   else ok "broker port 3001 not published"; fi
   h=$(n8n_node "fetch('http://sarah-portal:3001/internal/v1/health').then(r=>r.text()).then(console.log,e=>console.log('ERR '+e.message))")
   [[ "$h" == *'"ok":true'* ]] && ok "n8n reaches the broker" || bad "n8n can't reach the broker" "n8n must be on bzb-ai_default; portal must be up ($h)"
@@ -135,7 +135,7 @@ fi
 st=$(tailscale serve status 2>/dev/null)
 if [ -z "$st" ]; then skip "Funnel" "tailscale serve status gave nothing"
 else
-  echo "$st" | grep -q ":$PORTAL_PORT" && ok "something is served on :$PORTAL_PORT" || skip "Funnel :$PORTAL_PORT" "not set up yet: sudo tailscale funnel --bg --https=$PORTAL_PORT http://127.0.0.1:3000"
+  echo "$st" | grep -q ":$PORTAL_PORT" && ok "something is served on :$PORTAL_PORT" || skip "Funnel :$PORTAL_PORT" "not set up yet: sudo tailscale funnel --bg --https=$PORTAL_PORT http://127.0.0.1:3100"
   echo "$st" | sed 's/^/        /'
   echo "        (check: :$PORTAL_PORT Funnel on; :8443 (n8n) tailnet only, NOT Funnel)"
 fi

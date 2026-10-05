@@ -94,7 +94,7 @@ SELECT upn, calendar_auth, calendar_connected_at, needs_reconnect, needs_reconne
    and drop the hold releases that will never run: `UPDATE sched.outbox SET status = 'cancelled', last_error = 'offboarded' WHERE kind = 'delete_hold' AND status = 'pending' AND payload->>'employee_upn' = '<upn>';`
 4. Hand their open threads to someone: `SELECT * FROM sched.status WHERE employee_id = …` (close each by hand, as above, after telling the client).
 
-**Turn the public portal off** (Sarah keeps running): `sudo tailscale funnel --https=10000 off`. Turn it back on with `sudo tailscale funnel --bg --https=10000 http://127.0.0.1:3000`.
+**Turn the public portal off** (Sarah keeps running): `sudo tailscale funnel --https=10000 off`. Turn it back on with `sudo tailscale funnel --bg --https=10000 http://127.0.0.1:3100`.
 
 ## Changing behavior
 
