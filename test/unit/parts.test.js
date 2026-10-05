@@ -275,3 +275,23 @@ test('validator: {{ASKED}} only where offered, at most once', () => {
   assert.match(D.validateDraft('Great, {{TIME}} works. {{ASKED}}', 'ack', { optional: ['ASKED'] }).errors.join(), /unexpected placeholder/, 'not for ack');
   assert.ok(D.validateDraft(D.TEMPLATES.window_unavailable({ names: 'Dana', employee_first: 'Vic' }), 'window_unavailable').ok);
 });
+
+test('llm: with json_schema off, the schema goes into the prompt so the model uses the right field names', () => {
+  const L = require('../../src/llm');
+  const { ctx: mk } = require('./fixtures');
+  const c = mk();
+  c.settings.llm_json_schema = false;
+  const b = L.buildRequest(c, { system: 'Classify.', user: 'u', schema: 'client' }).body;
+  assert.equal(b.response_format, undefined);
+  assert.match(b.messages[0].content, /^Classify\.\n\nYour reply must be one JSON object matching this JSON Schema/);
+  assert.match(b.messages[0].content, /"earliest_date"/);
+  c.settings.llm_json_schema = true;
+  assert.equal(L.buildRequest(c, { system: 'Classify.', user: 'u', schema: 'client' }).body.messages[0].content, 'Classify.');
+});
+
+test('drafting rules only mention {{ASKED}} when it is on offer', () => {
+  const P = require('../../src/prompts');
+  const f = { purpose: 'new_round', employee_first: 'Vic', employee_full: 'Vic Suarez', company: 'BZB', recipient_first_names: ['Dana'], duration_min: 30, location: 'a Teams call' };
+  assert.ok(!P.draftPrompt(f).system.includes('{{ASKED}}'));
+  assert.ok(P.draftPrompt({ ...f, asked: true }).system.includes('{{ASKED}}'));
+});

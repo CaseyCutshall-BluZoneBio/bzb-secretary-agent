@@ -608,3 +608,12 @@ test('a counter-proposed time that is taken: {{ASKED}} names it', () => {
   assert.equal(reply.purpose, 'counter_unavailable');
   assert.match(reply.payload.body_text, /^Thanks, Dana\. Wednesday, October 14 at 8:00 AM is taken/);
 });
+
+test('constraint field-name variants from the model are understood ("date", "start_date"/"end_date")', () => {
+  // What BZB-AI-1's model returned once json_schema was off: [{"date": …, "start_time": null, "end_time": null}]
+  for (const constraints of [[{ date: '2026-10-08', start_time: null, end_time: null }], { start_date: '2026-10-08', end_date: '2026-10-08' }]) {
+    const { plan } = run(clientCtx('Anything on Thursday the 8th?'), { classify: llm(CLIENT({ intent: 'counter', constraints })) });
+    assert.ok(plan.offers.insert.length >= 1);
+    assert.ok(plan.offers.insert.every((o) => o.start.startsWith('2026-10-08')), JSON.stringify(constraints));
+  }
+});

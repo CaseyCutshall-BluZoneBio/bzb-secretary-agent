@@ -48,8 +48,15 @@ const liveThreadOffers = (ctx) => threadOffers(ctx).filter((o) => o.status === '
 function sanitizeConstraints(c, todayIso) {
   // Without json_schema, models sometimes return a list of windows instead of
   // one object ([{"earliest_date": …}]): merge them into one.
+  // Common field-name variants are accepted too ("date", "start_date"/"end_date", "from"/"to").
+  const norm = (x) => {
+    if (!x || typeof x !== 'object' || Array.isArray(x)) return x;
+    const pick = (...ks) => ks.map((k) => x[k]).find((v) => typeof v === 'string' && DATE_RE.test(v)) || null;
+    return { ...x, earliest_date: pick('earliest_date', 'start_date', 'from', 'date'),
+             latest_date: pick('latest_date', 'end_date', 'to', 'date') };
+  };
   if (Array.isArray(c)) {
-    const parts = c.filter((x) => x && typeof x === 'object');
+    const parts = c.filter((x) => x && typeof x === 'object').map(norm);
     const dates = (k) => parts.map((x) => x[k]).filter((d) => typeof d === 'string' && DATE_RE.test(d)).sort();
     const e = dates('earliest_date');
     const l = dates('latest_date');
@@ -60,7 +67,7 @@ function sanitizeConstraints(c, todayIso) {
       time_of_day: (parts.find((x) => ['morning', 'afternoon'].includes(x.time_of_day)) || {}).time_of_day,
     };
   }
-  c = c && typeof c === 'object' ? c : {};
+  c = c && typeof c === 'object' ? norm(c) : {};
   const date = (d) => (typeof d === 'string' && DATE_RE.test(d) ? d : null);
   let earliest = date(c.earliest_date);
   let latest = date(c.latest_date);

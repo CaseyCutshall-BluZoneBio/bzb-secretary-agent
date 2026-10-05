@@ -2,7 +2,7 @@
 
 Three layers. All of them passed on 2026-09-30 against n8n 2.41.4, Node 24, and Postgres 14 (earlier runs: Postgres 16).
 
-## Unit tests: `npm test` (101 + 39 tests, ~2 s)
+## Unit tests: `npm test` (104 + 39 tests, ~2 s)
 
 Plain Node (≥ 20). No n8n, database, or network. `npm test` runs `test/unit/` and then the portal's own suite (`portal/test/`, an npm workspace).
 

@@ -26,6 +26,10 @@ function buildRequest(ctx, prompt, { temperature = 0, maxTokens = 1500 } = {}) {
       type: 'json_schema',
       json_schema: { name: prompt.schema, schema: SCHEMAS[prompt.schema], strict: true },
     };
+  } else if (SCHEMAS[prompt.schema]) {
+    // Without response_format the model never sees the shape it must return,
+    // and invents its own field names. Put the schema in the prompt instead.
+    body.messages[0] = { role: 'system', content: `${prompt.system}\n\nYour reply must be one JSON object matching this JSON Schema exactly (same field names, same types):\n${JSON.stringify(SCHEMAS[prompt.schema])}` };
   }
   return { url: setting(ctx, 'litellm_url', ''), body, schema: prompt.schema };
 }
