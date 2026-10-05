@@ -102,6 +102,14 @@ function sameZone(text, zone) {
   return (ZONE_ALIASES[U.lower(zone)] || []).includes(t);
 }
 
+// A model-supplied first name, only if it looks like one ("Dana", "Mary-Jo").
+function singleFirstName(n) {
+  const s = U.sanitizeName(n);
+  if (!/^[\p{L}][\p{L}'-]{1,29}$/u.test(s)) return null;
+  if (s === s.toUpperCase() || ['slots', 'time', 'asked', 'there', 'sarah', 'null', 'none'].includes(s.toLowerCase())) return null;
+  return s;
+}
+
 function cleanTopic(t) {
   if (typeof t !== 'string') return null;
   const s = t.replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
@@ -367,6 +375,9 @@ function decideTrigger(S, parsed) {
 
   const names = {};
   for (const a of clients) names[a] = U.sanitizeName((msg.recipient_names || {})[a]);
+  // "Dana, great to meet you": the name the employee uses, for a single unnamed client.
+  const addressed = singleFirstName(cls.client_first_name);
+  if (addressed && clients.length === 1 && !names[clients[0]]) names[clients[0]] = addressed;
   const duration = Number.isInteger(cls.duration_min) && cls.duration_min >= 10 && cls.duration_min <= 240
     ? cls.duration_min : emp.default_duration_min;
   const location = ['teams', 'in_person', 'phone'].includes(cls.location) ? cls.location : emp.default_location;
@@ -414,7 +425,8 @@ function decideClient(S, parsed) {
   const names = { ...(t.client_names || {}) };
   const from = U.lower(ctx.message.from_address);
   let learned = false;
-  const fromName = U.sanitizeName(ctx.message.from_name);
+  // Display name first; else the first name they sign with ("Thanks, Dana").
+  const fromName = U.sanitizeName(ctx.message.from_name) || singleFirstName(cls && cls.sender_first_name);
   if (fromName && !names[from] && !U.isInternal(from, U.setting(ctx, 'internal_domains', []))) {
     names[from] = fromName;
     learned = true;
@@ -433,6 +445,11 @@ function decideClient(S, parsed) {
 
   // "Are you a bot?": answer honestly in any open state, then carry on.
   if (intent === 'ask_if_ai') return { type: 'ai_reply' };
+  // Length / format / location / bringing someone: answered from the thread's
+  // own facts, in any open state. Anything else stays a hand-off.
+  if (intent === 'logistics' && ['duration', 'format', 'location', 'add_attendee'].includes(cls.logistics_topic)) {
+    return { type: 'logistics_reply', topic: cls.logistics_topic };
+  }
 
   if (t.state === 'BOOKED') {
     if (intent === 'thanks' || intent === 'accept') return ack;
@@ -552,7 +569,7 @@ function act(S, calResp) {
   const a = S.action;
   const handlers = { ignore: doIgnore, start: doStart, propose: doPropose, accept_offer: doAcceptOffer,
                      counter_times: doCounterTimes, book: doBook, escalate: doEscalate, close: doClose,
-                     stall: doStall, remind: doRemind, clarify: doClarify, notify_no_clients: doNoClients, ai_reply: doAiReply };
+                     stall: doStall, remind: doRemind, clarify: doClarify, notify_no_clients: doNoClients, ai_reply: doAiReply, logistics_reply: doLogisticsReply };
   const h = handlers[a.type];
   if (!h) throw new Error(`unknown action ${a.type}`);
   h(S, a, busy);
@@ -887,6 +904,12 @@ function doClose(S, a) {
   S.plan.thread.set.closed_reason = a.reason;
   S.plan.thread.transitions.push('CLOSED');
   releaseOffers(S, liveThreadOffers(S.ctx), 'expired');
+}
+
+function doLogisticsReply(S, a) {
+  touchIfClient(S);
+  const open = threadOffers(S.ctx).some((o) => o.status === 'offered');
+  queueClientEmail(S, 'logistics', {}, { facts: { topic: a.topic, has_open_options: open } });
 }
 
 // An honest one-line answer to "are you a bot?"; the thread carries on as it was.

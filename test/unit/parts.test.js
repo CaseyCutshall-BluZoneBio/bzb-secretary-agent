@@ -80,6 +80,19 @@ test('every template passes its own validator', () => {
     const v = Dr.validateDraft(tpl(f), purpose);
     assert.ok(v.ok, `${purpose}: ${v.errors.join()}`);
   }
+  // logistics: every topic, every meeting type (incl. a real street address), with and without open options
+  const kinds = [{ location: 'a Teams call', location_type: 'teams' }, { location: 'a phone call', location_type: 'phone' },
+                 { location: 'in person at 321 Ballenger Center Dr, Frederick, MD 21703', location_type: 'in_person' }];
+  for (const topic of ['duration', 'format', 'location', 'add_attendee']) {
+    for (const k of kinds) {
+      for (const has_open_options of [true, false]) {
+        const text = Dr.TEMPLATES.logistics({ ...f, ...k, topic, has_open_options });
+        const v = Dr.validateDraft(text, 'logistics');
+        assert.ok(v.ok, `logistics/${topic}/${k.location_type}: ${v.errors.join()} :: ${text}`);
+        assert.ok(!text.includes('undefined'));
+      }
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

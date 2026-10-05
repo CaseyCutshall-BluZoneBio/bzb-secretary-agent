@@ -73,3 +73,4 @@ You'll get one email, **"Action needed: reconnect your calendar to Sarah"**. Cli
 - Her emails are signed "Scheduling Assistant to *your name* (AI)", so clients know she's an assistant.
 - **My threads** in the portal lists what she's working on for you.
 - If a client asks whether she's an AI, she says so honestly and carries on scheduling (or offers to loop you in).
+- She answers simple questions herself: how long the meeting is, whether it's Teams, phone or in person, where it is, and whether they can bring a colleague (they copy the colleague on the email). Anything else comes to you.

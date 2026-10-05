@@ -76,6 +76,7 @@ const SCHEMAS = {
       location_detail: { type: ['string', 'null'] },
       constraints: CONSTRAINTS_SCHEMA,
       topic: { type: ['string', 'null'], description: 'Short meeting topic for the calendar title, or null' },
+      client_first_name: { type: ['string', 'null'], description: 'The first name the employee uses to address the other person, or null' },
     },
   },
   client: {
@@ -85,8 +86,10 @@ const SCHEMAS = {
     properties: {
       intent: {
         type: 'string',
-        enum: ['accept', 'counter', 'reject_all', 'question', 'ask_if_ai', 'thanks', 'reschedule', 'cancel', 'own_link', 'delegate', 'other'],
+        enum: ['accept', 'counter', 'reject_all', 'question', 'logistics', 'ask_if_ai', 'thanks', 'reschedule', 'cancel', 'own_link', 'delegate', 'other'],
       },
+      logistics_topic: { type: ['string', 'null'], enum: ['duration', 'format', 'location', 'add_attendee', null] },
+      sender_first_name: { type: ['string', 'null'], description: 'The first name the sender signs with or introduces themselves by, or null' },
       accepted_option: { type: ['integer', 'null'] },
       proposed_times: PROPOSED_TIMES_SCHEMA,
       constraints: CONSTRAINTS_SCHEMA,
@@ -132,6 +135,7 @@ function classifyTriggerPrompt({ employeeFirst, zone, table, from, subject, body
       '- location_detail: an address or place they name, else null.',
       `- constraints: any window they state. Dates must come from the calendar table (${zone}). Use [] / "any" / null when not stated.`,
       '- topic: a 2–6 word topic for the calendar title if obvious, else null.',
+      '- client_first_name: the first name the employee uses to address the other person ("Dana, great to meet you" → "Dana"), else null.',
       OUTPUT_RULE,
     ].join('\n'),
     user: `Calendar table (${zone}):\n${table}\n\nFrom: ${from}\nSubject: ${subject || ''}\n-----\n${body || ''}\n-----`,
@@ -152,6 +156,8 @@ function classifyClientPrompt({ employeeFirst, zone, table, optionsText, from, s
       '- reject_all: none of the options work and they give no alternative.',
       '- question: they ask something that needs a person (agenda, attendees, prep, pricing, anything not about picking a time).',
       '- ask_if_ai: they ask whether Sarah is a bot, an AI, automated, or a real person (and nothing else that needs a person).',
+      '- logistics: they ONLY ask how long the meeting is (logistics_topic "duration"), whether it is Teams/phone/in person ("format"), where it is ("location"), or whether they can bring or add someone ("add_attendee"). Anything else is "question".',
+      'sender_first_name: the first name they sign with or introduce themselves by ("Thanks, Dana" → "Dana"), else null.',
       '- thanks: pure acknowledgement with nothing to act on.',
       '- reschedule / cancel: they want to move or cancel an already-agreed meeting.',
       `- own_link: they send their own booking link (Calendly etc.) or ask ${employeeFirst} to book with them.`,
@@ -213,6 +219,12 @@ const PURPOSE_GUIDE = {
   followup: () => 'The client has not replied to the earlier options. Write a short, friendly nudge and re-share the options. Put {{SLOTS}} on its own line.',
   ack: (f) => `The client picked {{TIME}}. Thank them and say you'll confirm with ${f.employee_first} and send the calendar invite shortly. Use {{TIME}} exactly once.`,
   confirmed: (f) => `The meeting is booked for {{TIME}}. Say the calendar invite is coming from ${f.employee_first}'s calendar${f.location_type === 'teams' ? ' with the Teams link' : ''}. Use {{TIME}} exactly once.`,
+  logistics: (f) => {
+    const q = { duration: `how long the meeting is (it is ${f.duration_min} minutes)`, format: `what kind of meeting it is (${f.location})`,
+                location: `where it is (${f.location}${f.location_type === 'teams' ? '; the Teams link comes with the calendar invite' : ''})`,
+                add_attendee: 'whether they can bring or add a colleague (yes: they just need to copy the colleague on this email, and Sarah will include them on the invite)' }[f.topic];
+    return `The client asked ${q}. Answer in a sentence or two, using only that fact. ${f.has_open_options ? 'Then mention the times you sent are still open (do not list them).' : ''} No placeholders.`;
+  },
   ai_disclosure: (f) => `The client asked whether you are a bot or an AI. Answer honestly and plainly that you are an AI assistant who helps ${f.employee_first} with scheduling (say "AI"). Don't dodge, joke it away, or claim to be human. Then offer to keep finding a time, or to loop ${f.employee_first} in directly if they'd prefer. No placeholders.`,
   handoff: (f) => `The client asked something only ${f.employee_first} can answer${f.question ? ` (${f.question})` : ''}. Say you'll pass it to ${f.employee_first}, who will follow up. Do not answer the question. No placeholders.`,
 };

@@ -10,7 +10,7 @@ const { DateTime } = require('./luxon');
 
 const PLACEHOLDERS = {
   intro: ['SLOTS'], new_round: ['SLOTS'], counter_unavailable: ['SLOTS'], window_unavailable: ['SLOTS'], taken: ['SLOTS'],
-  employee_declined: ['SLOTS'], followup: ['SLOTS'], ack: ['TIME'], confirmed: ['TIME'], handoff: [], ai_disclosure: [],
+  employee_declined: ['SLOTS'], followup: ['SLOTS'], ack: ['TIME'], confirmed: ['TIME'], handoff: [], ai_disclosure: [], logistics: [],
 };
 // Placeholders a draft MAY use (at most once), when code has the text for
 // them: {{ASKED}} is the day or time the client asked about, written by code.
@@ -26,6 +26,12 @@ const TEMPLATES = {
   followup: (f) => `Hi ${f.names}, circling back on finding a time with ${f.employee_first}. These are still open:\n\n{{SLOTS}}\n\nIf none of them fit, tell me what works and I'll find something.`,
   ack: (f) => `Great, ${f.names}. {{TIME}} it is. I'll confirm with ${f.employee_first} and send the invite over shortly.`,
   confirmed: (f) => `You're all set, ${f.names}: {{TIME}}. The invite is on its way from ${f.employee_first}'s calendar${f.location_type === 'teams' ? ', Teams link included' : ''}.`,
+  logistics: (f) => `${{
+    duration: `Good question, ${f.names}. We've set aside ${f.duration_min} minutes for it.`,
+    format: `It'll be ${f.location}, ${f.names}.`,
+    location: f.location_type === 'teams' ? `It'll be a Teams call, ${f.names}, so the link will come with the calendar invite.` : `It'll be ${f.location}, ${f.names}.`,
+    add_attendee: `Of course, ${f.names}. Just copy them on this email and I'll include them on the invite.`,
+  }[f.topic] || `Happy to help, ${f.names}.`}${f.has_open_options ? ' The times I sent are still open, so just let me know which works.' : ''}`,
   ai_disclosure: (f) => `Good question, ${f.names}. Yes, I'm an AI assistant that helps ${f.employee_first} with scheduling. I'm happy to keep looking for a time, or I can loop ${f.employee_first} in directly if you'd prefer.`,
   handoff: (f) => `Thanks, ${f.names}. That one is best answered by ${f.employee_first}, so I've passed it along and ${f.employee_first} will be in touch.`,
 };
