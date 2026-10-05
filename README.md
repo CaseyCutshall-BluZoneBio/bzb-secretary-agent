@@ -52,7 +52,7 @@ Code does everything else: which times are free, who gets emailed, what gets boo
 
 | Path | What |
 |---|---|
-| `m365/exchange-setup.ps1` | Shared mailbox + app scoped to Sarah's mail (and, legacy, Vic's calendar) with RBAC for Applications |
+| `m365/exchange-setup.ps1` | Shared mailbox + app scoped to Sarah's mailbox only, with RBAC for Applications. Calendars come through the portal |
 | `db/001_schema.sql` `002_functions.sql` `003_seed.sql` | Postgres schema, the functions the workflows call, config + Vic's row |
 | `db/004_portal.sql` | Upgrade in place: delegated calendars, pause/reconnect, the portal's tables and functions |
 | `portal/` | The self-service portal and token broker (Node, server-rendered, MSAL). `deploy/compose.portal.yml` adds it to the stack |

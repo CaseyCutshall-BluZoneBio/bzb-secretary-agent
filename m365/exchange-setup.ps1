@@ -2,6 +2,10 @@
 # BZB Scheduling Agent ("Sarah") — Exchange Online setup
 # Walkthrough: docs/02-m365-setup.md
 #
+# Gives the app MAIL rights on Sarah's mailbox and nothing else. Employees'
+# calendars are NOT granted here: each person connects their own calendar by
+# signing in to the portal (docs/09-portal.md).
+#
 # Run in Azure Cloud Shell (portal.azure.com → Cloud Shell → PowerShell).
 # Nothing to install: ExchangeOnlineManagement is preinstalled there.
 #
@@ -21,9 +25,9 @@
 
 $AppId       = "<application-client-id>"
 $SpObjectId  = "<enterprise-app-object-id>"
-$VicUpn      = "vic@bluzonebio.com"             # confirm Vic's exact UPN
 $CaseyUpn    = "<casey-upn>@bluzonebio.com"     # Full Access to Sarah's mailbox for shadow-mode review
 $SarahUpn    = "sarah.johnson@bluzonebio.com"
+$CheckUpns   = @("vic@bluzonebio.com", "brad")  # other mailboxes for the final check: must show nothing in scope
 
 Connect-ExchangeOnline
 
@@ -46,17 +50,11 @@ Set-CalendarProcessing -Identity $SarahUpn -AutomateProcessing None
 Add-MailboxPermission -Identity $SarahUpn -User $CaseyUpn -AccessRights FullAccess -AutoMapping $true
 
 # -----------------------------------------------------------------------------
-# 2. Tag the two mailboxes — with DIFFERENT attributes on purpose.
-#    GUI alternative: Exchange admin center → Recipients → Mailboxes → (mailbox)
+# 2. Tag Sarah's mailbox: the only mailbox the app may touch.
+#    GUI alternative: Exchange admin center → Recipients → Mailboxes → Sarah
 #    → Others → Custom attributes.
-#
-#    Least privilege: the app gets MAIL rights on Sarah only and CALENDAR rights
-#    on Vic only. It cannot read Vic's inbox or send as Vic, even with a stolen
-#    secret. The booking invite still comes from Vic's calendar: creating an
-#    event with attendees is a calendar operation, and Exchange sends the invite.
 # -----------------------------------------------------------------------------
 Set-Mailbox -Identity $SarahUpn -CustomAttribute10 "SchedAgentMail"
-Set-Mailbox -Identity $VicUpn   -CustomAttribute11 "SchedAgentCal"
 
 # -----------------------------------------------------------------------------
 # 3. Register the app's service principal in Exchange
@@ -64,37 +62,36 @@ Set-Mailbox -Identity $VicUpn   -CustomAttribute11 "SchedAgentCal"
 New-ServicePrincipal -AppId $AppId -ObjectId $SpObjectId -DisplayName "BZB Scheduling Agent"
 
 # -----------------------------------------------------------------------------
-# 4. Scopes + role assignments (RBAC for Applications)
+# 4. Scope + role assignments (RBAC for Applications): read/draft/move mail and
+#    send, on Sarah's mailbox only.
 # -----------------------------------------------------------------------------
 New-ManagementScope -Name "SchedAgent-Mail" `
   -RecipientRestrictionFilter "CustomAttribute10 -eq 'SchedAgentMail'"
-New-ManagementScope -Name "SchedAgent-Cal" `
-  -RecipientRestrictionFilter "CustomAttribute11 -eq 'SchedAgentCal'"
-
-# Sarah: read / draft / move mail, and send
-New-ManagementRoleAssignment -App $AppId -Role "Application Mail.ReadWrite"      -CustomResourceScope "SchedAgent-Mail"
-New-ManagementRoleAssignment -App $AppId -Role "Application Mail.Send"           -CustomResourceScope "SchedAgent-Mail"
-# Vic: read the calendar, write holds and the final event
-New-ManagementRoleAssignment -App $AppId -Role "Application Calendars.ReadWrite" -CustomResourceScope "SchedAgent-Cal"
+New-ManagementRoleAssignment -App $AppId -Role "Application Mail.ReadWrite" -CustomResourceScope "SchedAgent-Mail"
+New-ManagementRoleAssignment -App $AppId -Role "Application Mail.Send"      -CustomResourceScope "SchedAgent-Mail"
 
 # -----------------------------------------------------------------------------
 # 5. Verify — wait 30–60 minutes first; RBAC changes are cached.
 #    Expected:
-#      Sarah → Mail.ReadWrite + Mail.Send InScope True, Calendars False
-#      Vic   → Calendars.ReadWrite InScope True, Mail.* False
-#      Brad  → everything False
+#      Sarah → Mail.ReadWrite + Mail.Send InScope True
+#      everyone else (Vic, Brad, …) → everything False
 # -----------------------------------------------------------------------------
 Test-ServicePrincipalAuthorization -Identity $AppId -Resource $SarahUpn | Format-Table RoleName, InScope
-Test-ServicePrincipalAuthorization -Identity $AppId -Resource $VicUpn   | Format-Table RoleName, InScope
-Test-ServicePrincipalAuthorization -Identity $AppId -Resource "brad"    | Format-Table RoleName, InScope
+foreach ($u in $CheckUpns) {
+  Test-ServicePrincipalAuthorization -Identity $AppId -Resource $u | Format-Table RoleName, InScope
+}
 
 # -----------------------------------------------------------------------------
 # AFTER RUNNING (GUI)
 #   M365 admin center → Users → Active users → Sarah Johnson → Block sign-in.
 #   (Shared mailboxes get an enabled Entra account; nothing should ever log in as Sarah.)
 #
+# OPTIONAL: app-only calendar access for Vic, only if he must use Sarah before
+#   he can sign in to the portal. See docs/02-m365-setup.md, "Optional: app-only
+#   calendar access for Vic", which also has the commands to undo it.
+#
 # ROLLBACK
 #   Get-ManagementRoleAssignment -RoleAssigneeName $AppId | Remove-ManagementRoleAssignment
-#   Remove-ManagementScope "SchedAgent-Mail"; Remove-ManagementScope "SchedAgent-Cal"
+#   Remove-ManagementScope "SchedAgent-Mail"
 #   Remove-ServicePrincipal -Identity $AppId
 # =============================================================================

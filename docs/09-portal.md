@@ -9,7 +9,7 @@ What changes and what doesn't:
 | Sarah's mail | App-only Graph credential, RBAC-scoped to Sarah's mailbox | **Unchanged** |
 | An employee's calendar | App-only credential, RBAC-scoped by `CustomAttribute11` (per person, PowerShell) | The employee's **own delegated token**, used only by the portal's token broker |
 | Enrolling someone | Copy Vic's `employees` row by hand | They sign in; the row is created and prefilled from Outlook |
-| Vic | `calendar_auth = 'app'` | Keeps working unchanged until he signs in and connects once, then `delegated` |
+| Vic | `calendar_auth = 'app'` | Connects at the portal like everyone else; his row becomes `delegated`. On a fresh install the app never has calendar rights, so he connects before you leave `dry_run` |
 
 ```mermaid
 flowchart LR
@@ -194,13 +194,12 @@ To serve it as, say, `https://sarah.bluzonebio.com`:
 | Portal down | Same as above for delegated employees. App-only employees (Vic before he connects) are unaffected |
 | Encryption key lost | Every employee must reconnect. Keep `PORTAL_TOKEN_KEYS` in the vault |
 
-## 7. Switching Vic over
+## 7. Connecting Vic
 
-1. Vic signs in and connects (two clicks). His row flips to `delegated`, and the admin page shows "OK".
-2. After a day of normal use, remove his RBAC calendar tag: `Set-Mailbox vic@bluzonebio.com -CustomAttribute11 $null`.
-3. Once nobody is on `app` any more, remove the app's calendar rights entirely:
-   `Get-ManagementRoleAssignment -RoleAssigneeName <AppId> | ? Role -eq "Application Calendars.ReadWrite" | Remove-ManagementRoleAssignment`.
-   The app-only secret can then touch nothing but Sarah's mailbox.
+Vic's row comes from `db/003_seed.sql` with `calendar_auth = 'app'`. On a fresh install (`docs/02-m365-setup.md`) the app has no calendar rights, so until Vic connects, Sarah can't read his calendar.
+
+1. Vic signs in and connects (two clicks), before you leave `dry_run`. His row flips to `delegated`, and the admin page shows "OK".
+2. Only if you used the optional app-only calendar step in `docs/02-m365-setup.md`: undo it now, with the commands there. The app-only secret then touches nothing but Sarah's mailbox.
 
 ## 8. Rotating secrets
 

@@ -12,7 +12,7 @@ A shared mailbox needs no license. The only thing that would need one is a Teams
 Sarah's first reply moves Vic from CC to BCC, the way a human assistant does. Client replies then come only to Sarah. This is set per employee (`bcc_after_intro`).
 
 ### D4 · 2026-09-30 · Scope the app with Exchange RBAC for Applications, split mail vs calendar
-Entra application permissions can't be limited to mailboxes. Code-level limits don't count as a boundary, because anyone holding the secret bypasses the code. So the app has no Entra permissions at all. Mail rights cover Sarah only (`CustomAttribute10`) and calendar rights cover Vic only (`CustomAttribute11`). A stolen secret can't read Vic's inbox or send as him.
+Entra application permissions can't be limited to mailboxes. Code-level limits don't count as a boundary, because anyone holding the secret bypasses the code. So the app has no Entra permissions at all. Mail rights cover Sarah only (`CustomAttribute10`) and calendar rights cover Vic only (`CustomAttribute11`). A stolen secret can't read Vic's inbox or send as him. *(Calendar part superseded by D17: calendars now come through the portal with each employee's own token, and the app gets no calendar rights. `CustomAttribute11` survives only as an optional, temporary step in `docs/02-m365-setup.md`.)*
 
 ### D5 · Poll with Graph delta; no webhooks
 A 1-minute delay doesn't matter in scheduling. Polling avoids exposing n8n publicly and avoids subscription renewal.

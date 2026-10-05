@@ -5,7 +5,7 @@
 | Piece | Where | Job |
 |---|---|---|
 | Sarah's mailbox | Exchange Online, shared mailbox (no license) | The only address that ever sends. Clients and Vic write to it |
-| App registration "BZB Scheduling Agent" | Entra + Exchange RBAC for Applications | App-only Graph token. Mail rights on Sarah only (and, legacy, calendar rights on Vic until he connects through the portal) |
+| App registration "BZB Scheduling Agent" | Entra + Exchange RBAC for Applications | App-only Graph token. Mail rights on Sarah's mailbox only. No calendar rights (optional temporary exception for Vic: `docs/02-m365-setup.md`) |
 | App registration "BZB Sarah Portal" | Entra, assignment required ("Sarah users" group) | Delegated sign-in: each employee consents to Sarah using **their own** calendar |
 | Portal + token broker | `sarah-portal` in the compose stack; UI public through Tailscale Funnel `:8443`, broker on the compose network only | Sign-in, calendar consent, settings, pause. The broker holds each employee's encrypted refresh token and makes their calendar calls for n8n (`docs/09-portal.md`) |
 | n8n (6 workflows) | BZB-AI-1 compose stack | Scheduling, retries, HTTP calls, error alerts |
@@ -101,7 +101,7 @@ Nothing in the Processor talks to Graph except the read-only calendar lookup. Ev
 
 | Threat | Control |
 |---|---|
-| Stolen app secret reads or sends from any mailbox | No Entra permissions at all. Exchange RBAC for Applications grants mail on Sarah only and (legacy) calendar on Vic only (`m365/exchange-setup.ps1`). A stolen secret can't read Vic's mail or send as him. Once everyone uses the portal, the app loses calendar rights entirely |
+| Stolen app secret reads or sends from any mailbox | No Entra permissions at all. Exchange RBAC for Applications grants mail on Sarah's mailbox only (`m365/exchange-setup.ps1`), and no calendar rights. A stolen secret can't read Vic's mail, send as him, or touch any employee's calendar |
 | Stolen employee tokens | Refresh tokens live only in `sched.portal_tokens`, AES-256-GCM encrypted with a key that's only in the portal's env, bound to the employee row. The broker never returns a token: n8n gets Graph's answer for one of three calendar operations on that employee's own calendar (`/me`), so tokens never reach n8n's execution logs. The portal's DB role can run its own functions and read no tables |
 | The internet-facing portal | Assignment required in Entra plus tenant/home-tenant/member/domain checks, `__Host-` cookies, CSRF on every POST, strict CSP with no script, HSTS, rate-limited sign-in, URLs built only from `PORTAL_BASE_URL`, broker port never published (`docs/09-portal.md` §4) |
 | Anyone who emails Sarah drives Vic's calendar | Only an **enrolled employee** can start a thread, and only with `X-MS-Exchange-Organization-AuthAs: Internal` (Exchange-authenticated internal mail). A spoofed "Vic" email is ignored, and Casey gets an alert. External senders can only continue threads that already exist |

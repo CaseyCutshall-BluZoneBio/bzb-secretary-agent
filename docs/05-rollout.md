@@ -16,6 +16,7 @@ Set up the portal per `docs/09-portal.md`: the Entra app with assignment require
 - [ ] You (in the group) sign in, connect your calendar, and see your Outlook hours prefilled; the admin page shows you as "OK"
 - [ ] "Send me a test" in `dry_run` says it won't be sent; in `shadow`/`live` it arrives from Sarah
 - [ ] Pause yourself, CC Sarah: you get "Paused, so I didn't start". Resume
+- [ ] **Vic** signs in and connects his calendar; the admin page shows him `delegated` / OK. The app has no calendar rights, so until he does this Sarah can't read his calendar
 
 You're now an enrolled test employee for Stage 2. No SQL or RBAC changes needed.
 
@@ -92,7 +93,7 @@ Create 2–3 throwaway Gmail accounts as fake clients. Vic (or you, enrolled thr
 | 32 | Paused employee CCs Sarah | "Paused, so I didn't start"; no client email; running threads continue |
 | 33 | Revoke your portal sessions (Entra → your user → Revoke sessions), then have the client reply | One "Action needed: reconnect" email; the thread goes to you with "lost access to your calendar"; the client gets nothing. Reconnect in the portal: leftover holds disappear |
 | 34 | Disconnected employee CCs Sarah | "Reconnect your calendar, so I didn't start" |
-| 35 | Vic signs in and connects | Admin page shows him `delegated` / OK; his next thread works the same (then remove `CustomAttribute11`, `docs/09-portal.md` §7) |
+| 35 | Vic's first thread after connecting | Holds and the booking land on his calendar through the broker; the admin page shows his last token refresh |
 
 For 26 and 27, don't wait days. Age the thread instead:
 
