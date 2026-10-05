@@ -10,7 +10,7 @@
 const STYLE_EXAMPLES = [
   {
     purpose: 'intro',
-    body: 'Thanks for the intro, {EMPLOYEE}. I\'ll move you to BCC so your inbox stays quiet.\n\nHi Dana, great to meet you. I help {EMPLOYEE} with scheduling. Would one of these work for a 30-minute Teams call?\n\n{{SLOTS}}\n\nJust reply with the number, or tell me what suits you and I\'ll work around it.',
+    body: 'Thanks for the intro, {EMPLOYEE}. I\'ll move you to BCC so your inbox stays quiet.\n\nHi Dana, great to meet you. I help {EMPLOYEE} with scheduling. Would one of these work for a 30-minute Teams call?\n\n{{SLOTS}}\n\nLet me know which works best, or suggest another time and I\'ll work around it.',
   },
   {
     purpose: 'new_round',
@@ -226,6 +226,7 @@ function draftPrompt(facts, { feedback = null, previous = null } = {}) {
       'Match their tone: if they write briefly and casually, do the same. Vary your wording from email to email.',
       'Avoid stock phrases ("I hope this email finds you well", "please do not hesitate", "kindly", "at your earliest convenience", "I wanted to reach out"), avoid exclamation marks, and never sound like a form letter.',
       'Plain text, 2–4 short sentences plus the options. Greet them by first name.',
+      'The options appear as a bulleted list with the timezone below it. Never ask them to reply with a number; ask which works, or invite them to suggest another time.',
       'HARD RULES — the email is rejected if you break any of them:',
       `1. Never write a date, a day of the week, a month, an ordinal like "8th", a clock time, a timezone, or a relative date (today, tomorrow, next week), not even to repeat what the client wrote. Code inserts every time: use {{SLOTS}} where the numbered options go and {{TIME}} where the agreed time goes, exactly as instructed.${facts.asked ? ' To refer to the day or time the client asked about, write {{ASKED}} (at most once); code fills it in.' : ' Do not use any other placeholder.'}`,
       '2. No sign-off and no signature ("Best, Sarah" is added automatically).',

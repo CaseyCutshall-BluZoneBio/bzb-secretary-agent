@@ -77,8 +77,10 @@ test('live: trigger → intro → client picks option 2 → Vic says YES → boo
   assert.deepEqual(intro.bccRecipients.map((r) => r.emailAddress.address), [VIC], 'Vic moved to BCC');
   assert.deepEqual(intro.ccRecipients, []);
   const text = bodyOf(intro);
-  assert.match(text, /1\. \w+day, \w+ \d+, .*E[DS]T \(UTC−0[45]:00\)/);
-  assert.match(text, /3\. /);
+  assert.match(text, /• \w+day, \w+ \d+ at \d{1,2}:\d{2} [AP]M/);
+  assert.equal((text.match(/• /g) || []).length, 3, 'three options, as bullets');
+  assert.match(text, /All times are Eastern \(UTC−0[45]:00\)/);
+  assert.ok(!/\b\d\. \w+day/.test(text), 'no option numbers for the client');
   assert.match(text, /Scheduling Assistant to Vic Suarez \(AI\)/);
   await waitFor('3 holds on Vic\'s calendar', () => holds().length === 3);
   for (const h of holds()) {
@@ -210,7 +212,10 @@ test('timer: quiet client gets one follow-up with fresh options', async () => {
   await db.query(`UPDATE sched.threads SET last_outbound_at = now() - interval '80 hours', last_timer_at = NULL WHERE conversation_id = $1`,
                  [trig.conversationId]);
   const fu = await waitFor('follow-up to Sam', () => sentTo('sam@litware.com')[1], 120000);
-  assert.match(bodyOf(fu), /4\. /, 'option numbers continue across rounds');
+  assert.equal((bodyOf(fu).match(/• /g) || []).length, 3, 'a fresh set of options');
+  const nums = (await db.query(`SELECT option_no FROM sched.offers o JOIN sched.threads t ON t.id = o.thread_id
+                                 WHERE t.conversation_id = $1 ORDER BY option_no`, [trig.conversationId])).rows.map((r) => r.option_no);
+  assert.deepEqual(nums, [1, 2, 3, 4, 5, 6], 'option numbers continue across rounds (internally)');
   const t = await q1('SELECT followup_sent_at, round_count FROM sched.threads WHERE conversation_id = $1', [trig.conversationId]);
   assert.ok(t.followup_sent_at);
   assert.equal(t.round_count, 2);

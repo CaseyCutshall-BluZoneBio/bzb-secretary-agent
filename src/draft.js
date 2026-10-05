@@ -17,7 +17,7 @@ const PLACEHOLDERS = {
 const OPTIONAL_PLACEHOLDERS = { new_round: ['ASKED'], counter_unavailable: ['ASKED'], window_unavailable: ['ASKED'] };
 
 const TEMPLATES = {
-  intro: (f) => `${f.bcc ? `Thanks for the intro, ${f.employee_first}. I'll move you to BCC so your inbox stays quiet.` : `Thanks, ${f.employee_first}.`}\n\nHi ${f.names}, great to meet you. I help ${f.employee_first} with scheduling. Would one of these work for a ${f.duration_min}-minute ${f.location}?\n\n{{SLOTS}}\n\nJust reply with the number, or tell me what suits you and I'll work around it.`,
+  intro: (f) => `${f.bcc ? `Thanks for the intro, ${f.employee_first}. I'll move you to BCC so your inbox stays quiet.` : `Thanks, ${f.employee_first}.`}\n\nHi ${f.names}, great to meet you. I help ${f.employee_first} with scheduling. Would one of these work for a ${f.duration_min}-minute ${f.location}?\n\n{{SLOTS}}\n\nLet me know which works best, or suggest another time and I'll work around it.`,
   new_round: (f) => `No problem, ${f.names}. Here are a few more options:\n\n{{SLOTS}}\n\nDo any of these work better?`,
   counter_unavailable: (f) => `Thanks for suggesting that, ${f.names}. Unfortunately ${f.employee_first} is already booked then, but these are open:\n\n{{SLOTS}}`,
   window_unavailable: (f) => `Thanks, ${f.names}. Unfortunately ${f.employee_first} is booked up then, but these are the closest open times:\n\n{{SLOTS}}`,
@@ -125,8 +125,13 @@ function quoteHtml(target, zone) {
 }
 
 /** Final client-facing email: body text + signature, HTML version + quote. */
-function renderClientEmail(ctx, body, fill, replyTarget, zone, employee) {
-  const text = `${fillPlaceholders(body, fill)}\n\n${signature(ctx, employee)}`;
+// A sign-off line before the signature, as a person writes one.
+function signoff(purpose) {
+  return ['ack', 'confirmed', 'handoff'].includes(purpose) ? 'Thanks,' : 'Best,';
+}
+
+function renderClientEmail(ctx, body, fill, replyTarget, zone, employee, purpose) {
+  const text = `${fillPlaceholders(body, fill)}\n\n${signoff(purpose)}\n${signature(ctx, employee)}`;
   const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${textToHtml(text)}</div>\n${quoteHtml(replyTarget, zone)}`;
   return { body_text: text, body_html: html };
 }

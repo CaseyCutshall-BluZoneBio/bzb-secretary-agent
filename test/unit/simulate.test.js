@@ -30,7 +30,7 @@ test('simulator: request → offers → client picks → you say yes → booked,
   assert.equal(r1.offered, 3);
   const intro = r1.emails.find((e) => e.to === 'client');
   assert.equal(intro.source, 'model');
-  assert.match(intro.body, /^Hi Dana, would one of these work\?\n\n1\. /);
+  assert.match(intro.body, /^Hi Dana, would one of these work\?\n\n• /);
   assert.match(intro.body, /Scheduling Assistant to Casey Cutshall \(AI\)/);
 
   const r2 = await turn(w, 'client', 'Option 2 works', llm);
@@ -56,6 +56,6 @@ test('simulator: several rounds keep numbering, and a rejected draft is redrafte
   const e = r.emails.find((x) => x.to === 'client');
   assert.equal(e.purpose, 'new_round');
   assert.equal(e.source, 'model_retry');
-  assert.match(e.body, /\n4\. /, 'round 2 numbers continue at 4');
+  assert.deepEqual(w.offers.filter((o) => o.status === 'offered').map((o) => o.option_no), [4, 5, 6], 'round 2 numbers continue at 4 (internally)');
   assert.equal(w.offers.filter((o) => o.status === 'offered').length, 3);
 });

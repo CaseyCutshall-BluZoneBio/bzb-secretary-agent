@@ -41,7 +41,10 @@ test('new trigger → thread, 3 offers, 3 holds, intro reply with Vic moved to B
   assert.deepEqual(reply.payload.bcc.map((p) => p.address), ['vic@bluzonebio.com']);
   assert.deepEqual(reply.payload.cc, []);
   assert.equal(reply.payload.draft_source, 'model');
-  assert.match(reply.payload.body_text, /1\. Tuesday, October 6, .*EDT \(UTC−04:00\)/);
+  assert.match(reply.payload.body_text, /\n• Tuesday, October 6 at \d{1,2}:\d{2} [AP]M\n/);
+  assert.match(reply.payload.body_text, /\nAll times are Eastern \(UTC−04:00\)\.\n/);
+  assert.ok(!/\n\d\. /.test(reply.payload.body_text), 'no option numbers for the client');
+  assert.match(reply.payload.body_text, /\n\nBest,\nSarah Johnson\n/);
   assert.match(reply.payload.body_text, /Sarah Johnson\nScheduling Assistant to Vic Suarez \(AI\)\nBlu Zone Bio$/);
   assert.ok(!/Best,\nSarah\n/.test(reply.payload.body_text), 'model sign-off stripped');
   assert.match(reply.payload.body_html, /<hr/);
@@ -385,7 +388,7 @@ test('accept with a proposed time in another timezone → hand-off, never booked
 test('option numbers continue across rounds; an older option is re-checked and taken if free', () => {
   const r = run(clientCtx('none of those work'), { classify: llm(CLIENT({ intent: 'reject_all' })) });
   assert.deepEqual(r.plan.offers.insert.map((o) => o.option_no), [4, 5, 6]);
-  assert.match(r.plan.outbox.find((o) => o.kind === 'reply').payload.body_text, /\n4\. /);
+  assert.equal((r.plan.outbox.find((o) => o.kind === 'reply').payload.body_text.match(/\n• /g) || []).length, 3);
   // client answers the ORIGINAL email with "option 2" after round 2 went out
   const offs = [...offers().map((o) => ({ ...o, status: 'superseded', hold_event_id: null })),
     { id: 14, thread_id: 7, employee_id: 1, round: 2, option_no: 4, start: '2026-10-13T14:00:00+00:00', end: '2026-10-13T14:30:00+00:00', status: 'offered', flags: [], hold_event_id: null }];

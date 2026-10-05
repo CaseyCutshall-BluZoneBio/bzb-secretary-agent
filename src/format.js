@@ -38,6 +38,34 @@ function formatSpoken(startIso, zone) {
   return `${s.toFormat('cccc, LLLL d')} at ${s.toFormat('h:mm a')} ${s.toFormat('ZZZZ')}`;
 }
 
+// Plain names people use for US zones; anything else uses the abbreviation.
+const ZONE_NAMES = {
+  'America/New_York': 'Eastern', 'America/Detroit': 'Eastern', 'America/Indiana/Indianapolis': 'Eastern',
+  'America/Chicago': 'Central', 'America/Denver': 'Mountain', 'America/Phoenix': 'Arizona',
+  'America/Los_Angeles': 'Pacific', 'America/Anchorage': 'Alaska', 'Pacific/Honolulu': 'Hawaii',
+};
+
+/**
+ * The options as a person would write them: a bulleted list without option
+ * numbers, start times only (the length is in the message), and the timezone
+ * stated once with its UTC offset. If the options straddle a DST change,
+ * each line carries its own offset instead.
+ *   • Tuesday, October 6 at 2:00 PM
+ *   • Wednesday, October 7 at 10:30 AM
+ *
+ *   All times are Eastern (UTC−04:00).
+ */
+function formatSlotOptions(offers, zone) {
+  const sorted = [...offers].sort((a, b) => a.option_no - b.option_no);
+  const offsets = new Set(sorted.map((o) => offsetLabel(dt(o.start, zone))));
+  const name = ZONE_NAMES[zone] || dt(sorted[0].start, zone).toFormat('ZZZZ');
+  const lines = sorted.map((o) => {
+    const s = dt(o.start, zone);
+    return `• ${s.toFormat('cccc, LLLL d')} at ${s.toFormat('h:mm a')}${offsets.size > 1 ? ` (${offsetLabel(s)})` : ''}`;
+  });
+  return `${lines.join('\n')}\n\nAll times are ${name}${offsets.size > 1 ? '' : ` (${[...offsets][0]})`}.`;
+}
+
 // Short form for subjects: "Tue Oct 6, 2:00 PM EDT"
 function formatSlotShort(startIso, zone) {
   const s = dt(startIso, zone);
@@ -81,4 +109,4 @@ function locationPhrase(locationType, locationText) {
   return 'a Teams call';
 }
 
-module.exports = { dt, formatSpoken, formatSlot, formatSlotList, formatSlotShort, calendarTable, offsetLabel, locationPhrase, askedWindowText, askedTimeText };
+module.exports = { dt, formatSpoken, formatSlot, formatSlotList, formatSlotOptions, formatSlotShort, calendarTable, offsetLabel, locationPhrase, askedWindowText, askedTimeText };

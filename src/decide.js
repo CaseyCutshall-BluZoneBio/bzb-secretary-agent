@@ -668,7 +668,12 @@ function offerSlots(S, slots, round, purpose, asked = null) {
       });
     }
   }
-  queueClientEmail(S, purpose, { slotsText: F.formatSlotList(offers, emp.timezone), askedText: asked || undefined },
+  // What the client sees: bullets without option numbers (slot_style
+  // 'bullets', the default), or the numbered list ('numbered'). The option
+  // numbers still exist internally; the classifier maps "Tuesday works" to one.
+  const slotsText = U.setting(S.ctx, 'slot_style', 'bullets') === 'numbered'
+    ? F.formatSlotList(offers, emp.timezone) : F.formatSlotOptions(offers, emp.timezone);
+  queueClientEmail(S, purpose, { slotsText, askedText: asked || undefined },
                    { facts: { asked: !!asked } });
   S.email.optional = asked ? (D.OPTIONAL_PLACEHOLDERS[purpose] || []) : [];
 }
@@ -952,7 +957,7 @@ function finish(S, resp) {
     const recErrors = D.checkRecipients(S.ctx, e.recipients, e.allowed);
     if (recErrors.length) throw new Error(`recipient check failed: ${recErrors.join('; ')}`);
 
-    const rendered = D.renderClientEmail(S.ctx, body, e.fill, e.reply_target, employeeOf(S).timezone, employeeOf(S));
+    const rendered = D.renderClientEmail(S.ctx, body, e.fill, e.reply_target, employeeOf(S).timezone, employeeOf(S), e.purpose);
     S.plan.outbox.push({
       kind: 'reply', purpose: e.purpose, depends_on_ref: e.depends_on_ref || undefined,
       needs_approval: D.hasExternal(S.ctx, e.recipients),

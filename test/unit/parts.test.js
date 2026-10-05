@@ -295,3 +295,35 @@ test('drafting rules only mention {{ASKED}} when it is on offer', () => {
   assert.ok(!P.draftPrompt(f).system.includes('{{ASKED}}'));
   assert.ok(P.draftPrompt({ ...f, asked: true }).system.includes('{{ASKED}}'));
 });
+
+test('options read like a person wrote them: bullets, start times, the timezone once; numbered style still available', () => {
+  const F = require('../../src/format');
+  const offs = [
+    { option_no: 5, start: '2026-10-07T14:30:00Z', end: '2026-10-07T15:00:00Z' },
+    { option_no: 4, start: '2026-10-06T18:00:00Z', end: '2026-10-06T18:30:00Z' },
+  ];
+  assert.equal(F.formatSlotOptions(offs, 'America/New_York'),
+    '• Tuesday, October 6 at 2:00 PM\n• Wednesday, October 7 at 10:30 AM\n\nAll times are Eastern (UTC−04:00).');
+  // straddling the DST change: each line gets its offset
+  const dst = [{ option_no: 1, start: '2026-10-30T14:00:00Z' }, { option_no: 2, start: '2026-11-02T15:00:00Z' }];
+  assert.equal(F.formatSlotOptions(dst, 'America/New_York'),
+    '• Friday, October 30 at 10:00 AM (UTC−04:00)\n• Monday, November 2 at 10:00 AM (UTC−05:00)\n\nAll times are Eastern.');
+  assert.match(F.formatSlotOptions(offs, 'Europe/Berlin'), /All times are GMT\+2 \(UTC\+02:00\)\.$|All times are CEST \(UTC\+02:00\)\.$/);
+  // the old numbered style on request
+  const D = require('../../src/decide');
+  const { ctx, llm, NO_CONSTRAINTS } = require('./fixtures');
+  const c = ctx(); c.settings.slot_style = 'numbered';
+  let S = D.start(c);
+  S = D.interpret(S, llm({ is_scheduling_request: true, duration_min: null, location: null, location_detail: null, constraints: NO_CONSTRAINTS, topic: null }));
+  S = D.act(S, { value: [] });
+  assert.match(S.email.fill.slotsText, /^1\. /);
+});
+
+test('client emails end with a sign-off before the signature', () => {
+  const D = require('../../src/draft');
+  const { ctx } = require('./fixtures');
+  const emp = { signature_title: 'Scheduling Assistant to Vic Suarez (AI)' };
+  assert.match(D.renderClientEmail(ctx(), 'Hi Dana. {{SLOTS}}', { slotsText: '• x' }, null, 'America/New_York', emp, 'new_round').body_text,
+    /\n\nBest,\nSarah Johnson\nScheduling Assistant to Vic Suarez \(AI\)\nBlu Zone Bio$/);
+  assert.match(D.renderClientEmail(ctx(), 'Great, {{TIME}} it is.', { timeText: 'x' }, null, 'America/New_York', emp, 'ack').body_text, /\n\nThanks,\nSarah Johnson\n/);
+});

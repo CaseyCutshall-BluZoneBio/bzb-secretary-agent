@@ -99,6 +99,7 @@ INSERT INTO sched.settings (key, value, note) VALUES ('max_horizon_days', '90', 
 | `holds_enabled` | `true` | Private tentative holds on Vic's calendar for offered slots |
 | `hold_ttl_hours` | 48 | Holds are released after this even if the client hasn't answered |
 | `slot_step_min` | 30 | Candidate start-time grid |
+| `slot_style` | `bullets` (unset) | How options appear to the client: `bullets` ("• Tuesday, October 6 at 2:00 PM", timezone stated once, no option numbers) or `numbered` (the original "1. …–… EDT (UTC−04:00)" list) |
 | `widen_window_days` | 7 | Extra look-ahead when clean slots are scarce |
 | `max_horizon_days` | 90 | How far ahead a requested window may start (today is day 0). A request that starts later goes to the employee instead of being offered nearer dates. Also the length of the date table the model maps "the week of the 26th" against |
 | `outbox_max_attempts` | 3 | Graph retries before an item fails and the thread escalates |
