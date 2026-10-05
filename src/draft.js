@@ -14,15 +14,15 @@ const PLACEHOLDERS = {
 };
 
 const TEMPLATES = {
-  intro: (f) => `${f.bcc ? `Thanks for the introduction, ${f.employee_first} (moving you to BCC).` : `Thanks, ${f.employee_first}.`}\n\nHi ${f.names}, I'm ${f.employee_first}'s scheduling assistant. Would any of these work for a ${f.duration_min}-minute ${f.location}?\n\n{{SLOTS}}\n\nJust reply with the option number, or let me know what works better.`,
-  new_round: (f) => `Hi ${f.names}, here are a few other options:\n\n{{SLOTS}}\n\nWould any of those work?`,
-  counter_unavailable: (f) => `Hi ${f.names}, unfortunately that time doesn't work on ${f.employee_first}'s end. Would any of these work instead?\n\n{{SLOTS}}`,
-  taken: (f) => `Hi ${f.names}, apologies, that time was just taken. Could any of these work instead?\n\n{{SLOTS}}`,
-  employee_declined: (f) => `Hi ${f.names}, apologies, that time no longer works for ${f.employee_first}. Could any of these work instead?\n\n{{SLOTS}}`,
-  followup: (f) => `Hi ${f.names}, just following up on finding a time with ${f.employee_first}. Would any of these work?\n\n{{SLOTS}}`,
-  ack: (f) => `Thanks, ${f.names}. {{TIME}} it is. I'll confirm with ${f.employee_first} and send the calendar invite shortly.`,
-  confirmed: (f) => `All set, ${f.names}: {{TIME}}. The calendar invite is coming from ${f.employee_first}'s calendar${f.location_type === 'teams' ? ' with the Teams link' : ''}.`,
-  handoff: (f) => `Thanks, ${f.names}. I'll pass this along to ${f.employee_first}, who will follow up with you directly.`,
+  intro: (f) => `${f.bcc ? `Thanks for the intro, ${f.employee_first}. I'll move you to BCC so your inbox stays quiet.` : `Thanks, ${f.employee_first}.`}\n\nHi ${f.names}, great to meet you. I help ${f.employee_first} with scheduling. Would one of these work for a ${f.duration_min}-minute ${f.location}?\n\n{{SLOTS}}\n\nJust reply with the number, or tell me what suits you and I'll work around it.`,
+  new_round: (f) => `No problem, ${f.names}. Here are a few more options:\n\n{{SLOTS}}\n\nDo any of these work better?`,
+  counter_unavailable: (f) => `Thanks for suggesting that, ${f.names}. Unfortunately ${f.employee_first} is already booked then, but these are open:\n\n{{SLOTS}}`,
+  taken: (f) => `Sorry, ${f.names}, that slot was just taken. These are still open:\n\n{{SLOTS}}`,
+  employee_declined: (f) => `Sorry, ${f.names}, that time won't work for ${f.employee_first} after all. Could one of these work instead?\n\n{{SLOTS}}`,
+  followup: (f) => `Hi ${f.names}, circling back on finding a time with ${f.employee_first}. These are still open:\n\n{{SLOTS}}\n\nIf none of them fit, tell me what works and I'll find something.`,
+  ack: (f) => `Great, ${f.names}. {{TIME}} it is. I'll confirm with ${f.employee_first} and send the invite over shortly.`,
+  confirmed: (f) => `You're all set, ${f.names}: {{TIME}}. The invite is on its way from ${f.employee_first}'s calendar${f.location_type === 'teams' ? ', Teams link included' : ''}.`,
+  handoff: (f) => `Thanks, ${f.names}. That one is best answered by ${f.employee_first}, so I've passed it along and ${f.employee_first} will be in touch.`,
 };
 
 const FORBIDDEN = [
@@ -230,11 +230,11 @@ function vicNoticeMail(ctx, employee, thread, reason, excerpt, toldClient, tidTo
   return internalMail(ctx, employee,
     `Needs you: ${thread.subject || clientLabel(thread)} [S-${tidToken}]`,
     [`Hi ${employee.first_name},`, '',
-     `I've stopped handling scheduling with ${clientLabel(thread)}.`,
-     `Reason: ${reason}`,
+     `I've handed the scheduling with ${clientLabel(thread)} back to you.`,
+     `Why: ${reason}`,
      excerpt ? `\nTheir last message:\n${String(excerpt).slice(0, 800).split('\n').map((l) => `> ${l}`).join('\n')}` : null,
      '',
-     toldClient ? `I told them you'd follow up. The thread is yours from here.` : 'The thread is yours from here.']);
+     toldClient ? `I let them know you'd be in touch, so it's over to you from here.` : `I haven't replied to them, so it's over to you from here.`]);
 }
 
 function vicStalledMail(ctx, employee, thread, tidToken) {

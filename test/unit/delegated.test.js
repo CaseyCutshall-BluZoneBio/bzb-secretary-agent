@@ -118,7 +118,7 @@ test('calendar never connected, or needs reconnect → trigger ignored with the 
 test('prompts name the employee Sarah works for, never Vic, and use neutral pronouns', () => {
   const draft = P.draftPrompt({ purpose: 'intro', employee_first: 'Brad', employee_full: 'Brad Lee', company: 'Blu Zone Bio',
     recipient_first_names: ['Dana'], duration_min: 30, location: 'a Teams call', bcc: true });
-  assert.ok(draft.system.includes('Thanks for the introduction, Brad'));
+  assert.ok(draft.system.includes('Thanks for the intro, Brad'));
   assert.ok(!/Vic/.test(draft.system + draft.user));
   const trig = P.classifyTriggerPrompt({ employeeFirst: 'Brad', zone: 'America/New_York', table: '', from: 'b', subject: '', body: '' });
   assert.ok(!/\b(he|his|him)\b/.test(trig.system));

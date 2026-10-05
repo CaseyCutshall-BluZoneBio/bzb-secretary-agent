@@ -449,7 +449,9 @@ function decideClient(S, parsed) {
       }
       if (times.length) return { type: 'counter_times', times, constraints };
       if (hasConstraints(constraints)) return { type: 'propose', reason: 'new_round', constraints };
-      return { type: 'escalate', reason: why("The client wants different times, but I couldn't tell which"), handoff: true };
+      // "None of those, anything later?": no usable dates, so offer a fresh
+      // round after the last offered day (max_rounds still caps this).
+      return { type: 'propose', reason: 'new_round', constraints, shiftAfterLast: true };
     case 'reject_all':
       return { type: 'propose', reason: 'new_round', constraints, shiftAfterLast: !hasConstraints(constraints) };
     case 'thanks':

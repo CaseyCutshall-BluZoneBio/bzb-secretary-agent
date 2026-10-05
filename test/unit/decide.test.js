@@ -53,7 +53,7 @@ test('model draft that writes a time itself is rejected → template used', () =
   assert.equal(reply.payload.draft_source, 'template');
   assert.ok(reply.payload.draft_errors.some((e) => e.startsWith('weekday')));
   assert.ok(S.log.some((l) => l.includes('draft rejected')));
-  assert.match(reply.payload.body_text, /Thanks for the introduction, Vic \(moving you to BCC\)\./);
+  assert.match(reply.payload.body_text, /Thanks for the intro, Vic\. I'll move you to BCC/);
 });
 
 test('model down on a trigger → no guessing: nothing starts, Casey is alerted', () => {
@@ -527,4 +527,21 @@ test('the model gets a calendar table covering max_horizon_days', () => {
   const user = classifyReq.body.messages[1].content;
   assert.ok(user.includes('Sat 2027-01-02'), 'day 89 is in the table');
   assert.ok(!user.includes('2027-01-03'), 'day 90 is not');
+});
+
+test('"I can\'t do any of those, does he have something the following week?" → a new round later, not a hand-off', () => {
+  // The model reads it as a counter but gives no dates: Sarah offers later times herself.
+  const { plan } = run(clientCtx('I can’t do any of those does he have something the following week?'), {
+    classify: llm(CLIENT({ intent: 'counter', summary: 'rejects all options, asks for the following week' })),
+  });
+  assert.deepEqual(plan.thread.transitions, [], 'stays PROPOSED');
+  assert.equal(plan.outbox.find((o) => o.kind === 'reply').purpose, 'new_round');
+  assert.ok(!plan.outbox.some((o) => o.purpose === 'vic_notice'), 'no "Needs you" to the employee');
+  assert.equal(plan.offers.insert.length, 3);
+  assert.ok(plan.offers.insert.every((o) => o.start > '2026-10-09'), 'after the last offered day');
+  // when the model does work the week out, that window is used
+  const w = run(clientCtx('Can we do the week after?'), {
+    classify: llm(CLIENT({ intent: 'counter', constraints: { ...NO_CONSTRAINTS, earliest_date: '2026-10-12', latest_date: '2026-10-16' } })),
+  });
+  assert.ok(w.plan.offers.insert.every((o) => o.start >= '2026-10-12' && o.start < '2026-10-17'));
 });

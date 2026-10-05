@@ -10,15 +10,31 @@
 const STYLE_EXAMPLES = [
   {
     purpose: 'intro',
-    body: 'Thanks for the introduction, {EMPLOYEE} (moving you to BCC).\n\nHi Dana, I\'m Sarah, {EMPLOYEE}\'s scheduling assistant. Would any of these work for a 30-minute Teams call?\n\n{{SLOTS}}\n\nJust reply with the number that suits you, or let me know what works better.',
+    body: 'Thanks for the intro, {EMPLOYEE}. I\'ll move you to BCC so your inbox stays quiet.\n\nHi Dana, great to meet you. I help {EMPLOYEE} with scheduling. Would one of these work for a 30-minute Teams call?\n\n{{SLOTS}}\n\nJust reply with the number, or tell me what suits you and I\'ll work around it.',
   },
   {
     purpose: 'new_round',
-    body: 'No problem at all. Here are a few other options:\n\n{{SLOTS}}\n\nDo any of those work?',
+    body: 'No worries at all, Dana. Here are a few more options:\n\n{{SLOTS}}\n\nAny of these better?',
+  },
+  {
+    purpose: 'counter_unavailable',
+    body: 'Thanks for suggesting that, Dana. Unfortunately {EMPLOYEE} is already booked then, but these are open:\n\n{{SLOTS}}',
+  },
+  {
+    purpose: 'followup',
+    body: 'Hi Dana, circling back on finding a time with {EMPLOYEE}. These are still open:\n\n{{SLOTS}}\n\nIf none of them fit, tell me what works and I\'ll find something.',
   },
   {
     purpose: 'ack',
-    body: 'Perfect, {{TIME}} it is. I\'ll confirm with {EMPLOYEE} and send the calendar invite shortly.',
+    body: 'Perfect, {{TIME}} it is. I\'ll confirm with {EMPLOYEE} and send the invite over shortly.',
+  },
+  {
+    purpose: 'confirmed',
+    body: 'You\'re all set, Dana: {{TIME}}. The invite is on its way from {EMPLOYEE}\'s calendar.',
+  },
+  {
+    purpose: 'handoff',
+    body: 'Thanks, Dana. That one is best answered by {EMPLOYEE}, so I\'ve passed it along and {EMPLOYEE} will be in touch.',
   },
 ];
 
@@ -132,7 +148,7 @@ function classifyClientPrompt({ employeeFirst, zone, table, optionsText, from, s
         : `The options currently on the table (all ${zone}):\n${optionsText || '(none)'}`,
       'Classify the sender\'s latest reply. Intents:',
       '- accept: they clearly pick one of the numbered options (by number, day, or time). Set accepted_option to that number.',
-      '- counter: they propose specific other times, or give a window ("Thursday afternoon", "the week of the 20th").',
+      '- counter: they propose specific other times, or give a window ("Thursday afternoon", "the week of the 20th", "the following week", "anything later?").',
       '- reject_all: none of the options work and they give no alternative.',
       '- question: they ask something that needs a person (agenda, attendees, prep, pricing, anything not about picking a time).',
       '- thanks: pure acknowledgement with nothing to act on.',
@@ -141,6 +157,7 @@ function classifyClientPrompt({ employeeFirst, zone, table, optionsText, from, s
       '- delegate: they hand scheduling to someone else ("looping in my assistant who will find a time").',
       '- other: anything else.',
       `proposed_times: specific times they propose, with dates from the calendar table and 24-hour HH:MM exactly as they wrote them. constraints: general windows (dates from the table).`,
+      'Relative windows are relative to the options on the table: "the following week" / "the week after" means the calendar week after the last option, so set earliest_date to its Monday and latest_date to its Friday; "later that week" means the days after the option they mention, up to that Friday. Work the dates out from the calendar table.',
       `other_timezone: if they state a timezone other than ${zone} (e.g. "2pm PT", "London time"), write it; else null.`,
       'question: their question in one sentence, else null. summary: one sentence describing the reply.',
       OUTPUT_RULE,
@@ -199,7 +216,11 @@ function draftPrompt(facts) {
   return {
     system: [
       `You write short emails as Sarah, the AI scheduling assistant to ${facts.employee_full} at ${facts.company}.`,
-      'Style: warm, brief, professional. Plain text. 2–5 short sentences. Greet the recipients by first name.',
+      'Voice: an experienced, friendly executive assistant dashing off a quick email. Natural and conversational, with contractions.',
+      'First respond to what they just said, if anything ("No worries" when none of the times worked, "Thanks for suggesting that" when their time is taken), then get to the point.',
+      'Match their tone: if they write briefly and casually, do the same. Vary your wording from email to email.',
+      'Avoid stock phrases ("I hope this email finds you well", "please do not hesitate", "kindly", "at your earliest convenience", "I wanted to reach out"), avoid exclamation marks, and never sound like a form letter.',
+      'Plain text, 2–4 short sentences plus the options. Greet them by first name.',
       'HARD RULES — the email is rejected if you break any of them:',
       '1. Never write a date, a day of the week, a month, a clock time, a timezone, or a relative date (today, tomorrow, next week). Code inserts every time: use {{SLOTS}} where the numbered options go and {{TIME}} where the agreed time goes, exactly as instructed.',
       '2. No sign-off and no signature ("Best, Sarah" is added automatically).',
