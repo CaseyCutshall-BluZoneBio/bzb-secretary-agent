@@ -3,12 +3,19 @@
 const { SCHEMAS } = require('./prompts');
 const { setting } = require('./util');
 
-// OpenAI-compatible chat request for LiteLLM.
+// OpenAI-compatible chat request for LiteLLM. A reasoning model spends part of
+// max_tokens thinking before it answers, so the budget is a setting
+// (llm_max_tokens). llm_extra_body (a JSON object) is merged into every
+// request for backend-specific switches, e.g.
+// {"chat_template_kwargs": {"enable_thinking": false}}.
 function buildRequest(ctx, prompt, { temperature = 0, maxTokens = 1500 } = {}) {
+  const budget = Number(setting(ctx, 'llm_max_tokens', 0));
+  const extra = setting(ctx, 'llm_extra_body', null);
   const body = {
+    ...(extra && typeof extra === 'object' && !Array.isArray(extra) ? extra : {}),
     model: setting(ctx, 'llm_model', 'qwen'),
     temperature,
-    max_tokens: maxTokens,
+    max_tokens: Number.isInteger(budget) && budget > 0 ? budget : maxTokens,
     messages: [
       { role: 'system', content: prompt.system },
       { role: 'user', content: prompt.user },
@@ -69,7 +76,14 @@ function parseModelJson(resp, schemaName) {
   if (resp && resp.error) {
     return { ok: false, error: `llm_error: ${JSON.stringify(resp.error).slice(0, 300)}`, raw };
   }
-  if (!raw) return { ok: false, error: 'empty model response', raw };
+  if (!raw) {
+    const choice = resp && resp.choices && resp.choices[0];
+    if (choice && choice.finish_reason === 'length') {
+      return { ok: false, raw, error: 'the model used its whole token budget (thinking) before answering: '
+        + 'raise llm_max_tokens, or turn thinking off with llm_extra_body' };
+    }
+    return { ok: false, error: 'empty model response', raw };
+  }
   const required = (SCHEMAS[schemaName] && SCHEMAS[schemaName].required) || [];
   const text = raw
     .replace(/<think>[\s\S]*?<\/think>/gi, '')

@@ -86,7 +86,9 @@ INSERT INTO sched.settings (key, value, note) VALUES ('max_horizon_days', '90', 
 | `graph_base_url` | `https://graph.microsoft.com/v1.0` | |
 | `litellm_url` | `http://litellm:4000/v1/chat/completions` | As n8n reaches LiteLLM on the compose network |
 | `llm_model` | — | The LiteLLM model alias |
-| `llm_json_schema` | `true` | Send `response_format: json_schema`. Set `false` if the backend rejects it; the parser copes either way |
+| `llm_json_schema` | `true` | Send `response_format: json_schema`. Set `false` if the backend rejects it, or if a reasoning model does worse with it (on BZB-AI-1's local Qwen it was slower and less accurate, so it's `false` there); the parser copes either way |
+| `llm_max_tokens` | 4096 (unset) | Output budget per model call. Reasoning models spend part of it thinking before answering; if classification fails with "used its whole token budget", raise it |
+| `llm_extra_body` | unset | A JSON object merged into every LiteLLM request, for backend-specific switches, e.g. `{"chat_template_kwargs": {"enable_thinking": false}}` to stop a Qwen model thinking (if your backend supports it) |
 | `llm_drafting` | `true` | `false` = client emails always use the fixed templates (no model wording) |
 | `require_internal_auth` | `true` | Only act on employee emails stamped `AuthAs: Internal`. Read `docs/05-rollout.md` §2 before changing |
 | `n8n_base_url` | — | Tailnet URL for review links, e.g. `http://bzb-ai-1:5678` |

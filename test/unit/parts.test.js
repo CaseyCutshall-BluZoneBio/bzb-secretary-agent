@@ -217,3 +217,21 @@ test('poller: Graph failures are described in words, never as an empty error obj
   assert.match(Pl.describeGraphFailure({ statusCode: 401, body: { error: { code: 'InvalidAuthenticationToken' } } }), /^HTTP 401 InvalidAuthenticationToken.*scope/);
   assert.equal(Pl.describeGraphFailure({ error: { message: 'getaddrinfo ENOTFOUND graph.microsoft.com' } }), 'getaddrinfo ENOTFOUND graph.microsoft.com');
 });
+
+test('llm: token budget and extra body come from settings; running out of tokens says so', () => {
+  const L = require('../../src/llm');
+  const { ctx: mk } = require('./fixtures');
+  const c = mk();
+  const prompt = { system: 's', user: 'u', schema: 'trigger' };
+  assert.equal(L.buildRequest(c, prompt, { maxTokens: 4096 }).body.max_tokens, 4096);
+  c.settings.llm_max_tokens = 8000;
+  c.settings.llm_extra_body = { chat_template_kwargs: { enable_thinking: false }, model: 'ignored' };
+  const b = L.buildRequest(c, prompt, { maxTokens: 4096 }).body;
+  assert.equal(b.max_tokens, 8000);
+  assert.deepEqual(b.chat_template_kwargs, { enable_thinking: false });
+  assert.equal(b.model, 'qwen-test', 'extra body never overrides the model or messages');
+  const out = L.parseModelJson({ choices: [{ finish_reason: 'length', message: { content: '', reasoning_content: 'hmm…' } }] }, 'trigger');
+  assert.equal(out.ok, false);
+  assert.match(out.error, /whole token budget.*llm_max_tokens/);
+  assert.equal(L.parseModelJson({ choices: [{ finish_reason: 'stop', message: { content: '' } }] }, 'trigger').error, 'empty model response');
+});

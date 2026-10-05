@@ -292,7 +292,7 @@ function start(ctx) {
   } else if (r.kind === 'employee_in_thread') {
     prompt = P.classifyEmployeeInThreadPrompt({ employeeFirst: emp.first_name, body: msg.body_text });
   }
-  S.llm = L.buildRequest(ctx, prompt, { temperature: 0, maxTokens: 1500 });
+  S.llm = L.buildRequest(ctx, prompt, { temperature: 0, maxTokens: 4096 });
   return S;
 }
 
@@ -532,7 +532,7 @@ function act(S, calResp) {
   h(S, a, busy);
 
   if (S.email && U.setting(S.ctx, 'llm_drafting', true) !== false) {
-    S.llm = L.buildRequest(S.ctx, P.draftPrompt(S.email.facts), { temperature: 0.4, maxTokens: 1500 });
+    S.llm = L.buildRequest(S.ctx, P.draftPrompt(S.email.facts), { temperature: 0.4, maxTokens: 4096 });
   }
   return S;
 }
