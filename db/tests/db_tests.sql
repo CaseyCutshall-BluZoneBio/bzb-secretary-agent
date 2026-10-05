@@ -32,7 +32,7 @@ SAVEPOINT default_path;
 SET LOCAL search_path = public;
 SELECT pg_temp.ok('functions + triggers work under the default search_path (as n8n calls them)',
   (sched.apply_plan(jsonb_build_object('thread', jsonb_build_object(
-     'create', jsonb_build_object('conversation_id', 'SP-TEST', 'employee_id', (SELECT id FROM sched.employees LIMIT 1),
+     'create', jsonb_build_object('conversation_id', 'SP-TEST', 'employee_id', (SELECT min(id) FROM sched.employees),
                                   'client_addresses', '["x@y.com"]'::jsonb, 'duration_min', 30, 'location_type', 'teams',
                                   'trigger_message_id', 't'),
      'transitions', '["PROPOSED"]'::jsonb)))->>'thread_id') IS NOT NULL);
@@ -47,7 +47,11 @@ UPDATE settings SET value = '"sarah.johnson@bluzonebio.com"' WHERE key = 'sarah_
 UPDATE settings SET value = '"casey@bluzonebio.com"' WHERE key = 'alert_address';
 UPDATE settings SET value = '"http://n8n.test"' WHERE key = 'n8n_base_url';
 UPDATE settings SET value = to_jsonb(now() - interval '1 day') WHERE key = 'processing_start_at';
-DELETE FROM employees WHERE upn <> 'vic@bluzonebio.com';
+-- Act as the seeded employee (the lowest id) under the address the fixtures
+-- use, whatever the real one is. Anyone else is switched off rather than
+-- deleted (their threads would block a delete). All of this is rolled back.
+UPDATE employees SET enrolled = false WHERE id <> (SELECT min(id) FROM employees);
+UPDATE employees SET upn = 'vic@bluzonebio.com' WHERE id = (SELECT min(id) FROM employees);
 SELECT set_mode('live');
 
 -- -----------------------------------------------------------------------------
@@ -100,7 +104,7 @@ CREATE TEMP TABLE ap AS SELECT apply_plan(jsonb_build_object(
   'message_id', (SELECT (r->>'id')::bigint FROM ing),
   'message', '{"disposition":"processed","classification":{"intent":"schedule"}}'::jsonb,
   'thread', jsonb_build_object(
-    'create', jsonb_build_object('conversation_id', 'CONV-1', 'employee_id', (SELECT id FROM employees LIMIT 1),
+    'create', jsonb_build_object('conversation_id', 'CONV-1', 'employee_id', (SELECT min(id) FROM employees),
        'subject', 'Intro', 'client_addresses', '["dana@client.com"]'::jsonb, 'duration_min', 30,
        'location_type', 'teams', 'trigger_message_id', '<trig1@bzb>'),
     'set', '{"round_count":1,"employee_moved_to_bcc":true}'::jsonb,
@@ -124,13 +128,13 @@ SELECT pg_temp.ok('apply_plan: hold outbox rows linked to offers',
   (SELECT count(*) = 3 FROM outbox WHERE kind = 'create_hold' AND offer_id IS NOT NULL));
 SELECT pg_temp.ok('apply_plan: message attached + processed',
   (SELECT thread_id IS NOT NULL AND processed_at IS NOT NULL FROM messages WHERE internet_message_id = '<trig1@bzb>'));
-SELECT pg_temp.ok('apply_plan: transitions logged', (SELECT count(*) = 2 FROM thread_events));
+SELECT pg_temp.ok('apply_plan: transitions logged', (SELECT count(*) = 2 FROM thread_events WHERE thread_id = (SELECT id FROM threads WHERE conversation_id = 'CONV-1')));
 
 -- A second thread whose offer overlaps must fail atomically (no half-created thread)
 SELECT pg_temp.expect_error('apply_plan: overlapping offer in another thread rejected',
   $q$SELECT sched.apply_plan(jsonb_build_object(
       'thread', jsonb_build_object('create', jsonb_build_object('conversation_id', 'CONV-2',
-         'employee_id', (SELECT id FROM sched.employees LIMIT 1), 'client_addresses', '["lee@other.com"]'::jsonb,
+         'employee_id', (SELECT min(id) FROM sched.employees), 'client_addresses', '["lee@other.com"]'::jsonb,
          'duration_min', 30, 'location_type', 'teams', 'trigger_message_id', '<t2>'),
          'transitions', '["PROPOSED"]'::jsonb),
       'offers', jsonb_build_object('insert', jsonb_build_array(
@@ -234,7 +238,7 @@ SELECT pg_temp.ok('depends_on: confirmation + hold release now claimable', (SELE
 SELECT set_mode('shadow');
 UPDATE outbox SET status = 'done' WHERE status = 'executing';
 INSERT INTO threads (conversation_id, employee_id, client_addresses, duration_min, location_type, trigger_message_id)
-VALUES ('CONV-3', (SELECT id FROM employees LIMIT 1), '{kim@c.com}', 30, 'teams', '<t3>');
+VALUES ('CONV-3', (SELECT min(id) FROM employees), '{kim@c.com}', 30, 'teams', '<t3>');
 SELECT apply_plan(jsonb_build_object('thread', jsonb_build_object('id', (SELECT id FROM threads WHERE conversation_id = 'CONV-3')),
   'outbox', jsonb_build_array(
     jsonb_build_object('kind','reply','purpose','intro','needs_approval',true,
@@ -282,7 +286,7 @@ SELECT pg_temp.ok('review: reject → NEEDS_VIC with reason',
 SELECT set_mode('live');
 UPDATE outbox SET status = 'done' WHERE status IN ('executing', 'pending');
 INSERT INTO threads (conversation_id, employee_id, client_addresses, duration_min, location_type, trigger_message_id)
-VALUES ('CONV-5', (SELECT id FROM employees LIMIT 1), '{pat@c.com}', 30, 'teams', '<t5>');
+VALUES ('CONV-5', (SELECT min(id) FROM employees), '{pat@c.com}', 30, 'teams', '<t5>');
 UPDATE threads SET state = 'PROPOSED' WHERE conversation_id = 'CONV-5';
 SELECT apply_plan(jsonb_build_object('thread', jsonb_build_object('id', (SELECT id FROM threads WHERE conversation_id = 'CONV-5')),
   'outbox', jsonb_build_array(
@@ -308,7 +312,7 @@ SELECT pg_temp.ok('fail: alert queued for Casey',
 -- -----------------------------------------------------------------------------
 UPDATE outbox SET status = 'done' WHERE status IN ('pending', 'executing');
 INSERT INTO threads (conversation_id, employee_id, client_addresses, duration_min, location_type, trigger_message_id)
-VALUES ('CONV-6', (SELECT id FROM employees LIMIT 1), '{q@c.com}', 30, 'teams', '<t6>');
+VALUES ('CONV-6', (SELECT min(id) FROM employees), '{q@c.com}', 30, 'teams', '<t6>');
 SELECT apply_plan(jsonb_build_object('thread', jsonb_build_object('id', (SELECT id FROM threads WHERE conversation_id = 'CONV-6')),
   'offers', '{"insert":[{"ref":"z","round":1,"option_no":1,"start":"2026-11-02T15:00:00Z","end":"2026-11-02T15:30:00Z","score":100}]}'::jsonb,
   'outbox', '[{"kind":"create_hold","purpose":"hold","offer_ref":"z","payload":{}},{"kind":"delete_hold","purpose":"hold","offer_ref":"z","payload":{}}]'::jsonb));
@@ -323,7 +327,7 @@ SELECT pg_temp.ok('delete_hold: create cancelled, delete marked done (noop)',
 -- -----------------------------------------------------------------------------
 UPDATE outbox SET status = 'done' WHERE status IN ('pending', 'executing', 'awaiting_approval', 'approved');
 INSERT INTO threads (conversation_id, employee_id, client_addresses, duration_min, location_type, trigger_message_id)
-VALUES ('CONV-7', (SELECT id FROM employees LIMIT 1), '{r@c.com}', 30, 'teams', '<t7>');
+VALUES ('CONV-7', (SELECT min(id) FROM employees), '{r@c.com}', 30, 'teams', '<t7>');
 UPDATE threads SET state = 'PROPOSED', last_outbound_at = now() - interval '80 hours' WHERE conversation_id = 'CONV-7';
 SELECT pg_temp.ok('timer: quiet client → client_followup',
   EXISTS (SELECT 1 FROM timer_events() e WHERE e->>'action' = 'client_followup'
@@ -335,7 +339,7 @@ SELECT pg_temp.ok('timer: still quiet after follow-up → mark_stalled',
   EXISTS (SELECT 1 FROM timer_events() e WHERE e->>'action' = 'mark_stalled'));
 
 INSERT INTO threads (conversation_id, employee_id, client_addresses, duration_min, location_type, trigger_message_id)
-VALUES ('CONV-8', (SELECT id FROM employees LIMIT 1), '{s@c.com}', 30, 'teams', '<t8>');
+VALUES ('CONV-8', (SELECT min(id) FROM employees), '{s@c.com}', 30, 'teams', '<t8>');
 UPDATE threads SET state = 'PROPOSED' WHERE conversation_id = 'CONV-8';
 UPDATE threads SET state = 'CLIENT_ACCEPTED' WHERE conversation_id = 'CONV-8';
 UPDATE threads SET state = 'AWAITING_VIC', last_outbound_at = now() - interval '5 hours' WHERE conversation_id = 'CONV-8';
@@ -351,7 +355,7 @@ SELECT pg_temp.ok('sweeper: stuck email marked + thread escalated',
 
 -- holds: an old unanswered offer gets its hold released, once
 INSERT INTO offers (thread_id, employee_id, round, option_no, slot, score, hold_event_id, created_at)
-VALUES ((SELECT id FROM threads WHERE conversation_id = 'CONV-7'), (SELECT id FROM employees LIMIT 1), 1, 1,
+VALUES ((SELECT id FROM threads WHERE conversation_id = 'CONV-7'), (SELECT min(id) FROM employees), 1, 1,
         tstzrange(now() + interval '3 days', now() + interval '3 days 30 minutes', '[)'), 100, 'HOLD-OLD', now() - interval '50 hours');
 SELECT count(*) FROM timer_events();
 SELECT count(*) FROM timer_events();
@@ -361,9 +365,9 @@ SELECT pg_temp.ok('holds: expired hold released exactly once',
 
 -- a thread closed by hand stops blocking slots on the next timer run
 INSERT INTO threads (conversation_id, employee_id, client_addresses, duration_min, location_type, trigger_message_id)
-VALUES ('CONV-9', (SELECT id FROM employees LIMIT 1), '{z@c.com}', 30, 'teams', '<t9>');
+VALUES ('CONV-9', (SELECT min(id) FROM employees), '{z@c.com}', 30, 'teams', '<t9>');
 INSERT INTO offers (thread_id, employee_id, round, option_no, slot, score)
-VALUES ((SELECT id FROM threads WHERE conversation_id = 'CONV-9'), (SELECT id FROM employees LIMIT 1), 1, 1,
+VALUES ((SELECT id FROM threads WHERE conversation_id = 'CONV-9'), (SELECT min(id) FROM employees), 1, 1,
         tstzrange(now() + interval '5 days', now() + interval '5 days 30 minutes', '[)'), 100);
 UPDATE threads SET closed_reason = 'closed by Casey' WHERE conversation_id = 'CONV-9';
 UPDATE threads SET state = 'CLOSED' WHERE conversation_id = 'CONV-9';
@@ -376,7 +380,7 @@ SELECT pg_temp.ok('closed thread: its offers are expired by the timer',
 -- -----------------------------------------------------------------------------
 UPDATE outbox SET status = 'done' WHERE status IN ('pending', 'executing', 'awaiting_approval', 'approved');
 INSERT INTO threads (conversation_id, employee_id, client_addresses, duration_min, location_type, trigger_message_id)
-VALUES ('CONV-R', (SELECT id FROM employees LIMIT 1), '{dana@r.com}', 30, 'teams', '<trigR@bzb>');
+VALUES ('CONV-R', (SELECT min(id) FROM employees), '{dana@r.com}', 30, 'teams', '<trigR@bzb>');
 UPDATE threads SET state = 'PROPOSED', last_outbound_at = now() WHERE conversation_id = 'CONV-R';
 INSERT INTO messages (direction, internet_message_id, graph_message_id, conversation_id, thread_id, from_address, event_at, processed_at, disposition) VALUES
   ('in', '<trigR@bzb>', 'G-R-TRIG',   'CONV-R', (SELECT id FROM threads WHERE conversation_id = 'CONV-R'), 'vic@bluzonebio.com', now() - interval '3 hours', now(), 'processed'),
@@ -402,7 +406,7 @@ SELECT pg_temp.ok('sweeper: the crashed email escalates its thread (no silent fo
 
 -- optimistic concurrency
 INSERT INTO threads (conversation_id, employee_id, client_addresses, duration_min, location_type, trigger_message_id)
-VALUES ('CONV-V', (SELECT id FROM employees LIMIT 1), '{v@v.com}', 30, 'teams', '<tV>');
+VALUES ('CONV-V', (SELECT min(id) FROM employees), '{v@v.com}', 30, 'teams', '<tV>');
 UPDATE threads SET state = 'PROPOSED' WHERE conversation_id = 'CONV-V';
 INSERT INTO messages (direction, internet_message_id, from_address, conversation_id, processing_started_at, created_at)
 VALUES ('in', '<v-late@v>', 'v@v.com', 'CONV-V', now(), now() - interval '5 minutes');
@@ -446,7 +450,7 @@ SELECT pg_temp.ok('late booking on an escalated thread: stays NEEDS_VIC, event i
 
 -- offers on an escalated thread stop blocking slots
 INSERT INTO offers (thread_id, employee_id, round, option_no, slot, score)
-VALUES ((SELECT id FROM threads WHERE conversation_id = 'CONV-V'), (SELECT id FROM employees LIMIT 1), 1, 1,
+VALUES ((SELECT id FROM threads WHERE conversation_id = 'CONV-V'), (SELECT min(id) FROM employees), 1, 1,
         tstzrange(now() + interval '6 days', now() + interval '6 days 30 minutes', '[)'), 100);
 SELECT count(*) FROM timer_events();
 SELECT pg_temp.ok('NEEDS_VIC thread: its offers are expired by the timer',
@@ -455,7 +459,7 @@ SELECT pg_temp.ok('NEEDS_VIC thread: its offers are expired by the timer',
 -- shadow items waiting for approval too long are cancelled, not sent stale
 SELECT set_mode('shadow');
 INSERT INTO threads (conversation_id, employee_id, client_addresses, duration_min, location_type, trigger_message_id)
-VALUES ('CONV-A', (SELECT id FROM employees LIMIT 1), '{a@a.com}', 30, 'teams', '<tA>');
+VALUES ('CONV-A', (SELECT min(id) FROM employees), '{a@a.com}', 30, 'teams', '<tA>');
 UPDATE threads SET state = 'PROPOSED' WHERE conversation_id = 'CONV-A';
 INSERT INTO outbox (thread_id, kind, purpose, payload, status, needs_approval, approval_token, created_at)
 VALUES ((SELECT id FROM threads WHERE conversation_id = 'CONV-A'), 'reply', 'intro', '{}', 'awaiting_approval', true, 'tok', now() - interval '30 hours');
@@ -467,20 +471,20 @@ SELECT pg_temp.ok('approval expiry: an unreviewed draft older than max age is ca
 -- a new request in a finished conversation may create a new thread there; an active one blocks it
 SELECT pg_temp.ok('conversation reuse: a new thread in the conversation of a BOOKED one is allowed',
   (apply_plan(jsonb_build_object('thread', jsonb_build_object('create', jsonb_build_object('conversation_id', 'CONV-1',
-     'employee_id', (SELECT id FROM employees LIMIT 1), 'client_addresses', '["dana@client.com"]'::jsonb, 'duration_min', 30,
+     'employee_id', (SELECT min(id) FROM employees), 'client_addresses', '["dana@client.com"]'::jsonb, 'duration_min', 30,
      'location_type', 'teams', 'trigger_message_id', '<again>'))))->>'thread_id') IS NOT NULL);
 SELECT pg_temp.ok('conversation reuse: matching picks the newest thread in the conversation',
   (SELECT (match_thread(m)).thread_id = (SELECT max(id) FROM threads WHERE conversation_id = 'CONV-1')
      FROM messages m WHERE internet_message_id = '<trig1@bzb>'));
 SELECT pg_temp.expect_error('conversation reuse: two ACTIVE threads in one conversation are refused',
   $q$SELECT sched.apply_plan(jsonb_build_object('thread', jsonb_build_object('create', jsonb_build_object('conversation_id', 'CONV-1',
-     'employee_id', (SELECT id FROM sched.employees LIMIT 1), 'client_addresses', '["x@x.com"]'::jsonb, 'duration_min', 30,
+     'employee_id', (SELECT min(id) FROM sched.employees), 'client_addresses', '["x@x.com"]'::jsonb, 'duration_min', 30,
      'location_type', 'teams', 'trigger_message_id', '<again2>'))))$q$, 'duplicate key');
 
 -- going live closes whatever dry_run created
 SELECT set_mode('dry_run');
 SELECT apply_plan(jsonb_build_object('thread', jsonb_build_object('create', jsonb_build_object('conversation_id', 'CONV-DRY',
-   'employee_id', (SELECT id FROM employees LIMIT 1), 'client_addresses', '["d@d.com"]'::jsonb, 'duration_min', 30,
+   'employee_id', (SELECT min(id) FROM employees), 'client_addresses', '["d@d.com"]'::jsonb, 'duration_min', 30,
    'location_type', 'teams', 'trigger_message_id', '<dry>'), 'transitions', '["PROPOSED"]'::jsonb),
    'offers', jsonb_build_object('insert', jsonb_build_array(jsonb_build_object('ref','d','round',1,'option_no',1,
       'start', now() + interval '8 days', 'end', now() + interval '8 days 30 minutes', 'score', 100)))));

@@ -4,7 +4,18 @@ Assumes n8n **2.x** in the `bzb-ai` compose stack on BZB-AI-1, the service named
 
 ## 1. Prerequisites
 
-- **n8n must NOT be publicly reachable.** The review webhook is token-protected, but it belongs on the tailnet only. (The Funnel `:8443` exposure is closed; keep it that way.)
+- **n8n must NOT be publicly reachable.** The review webhook is token-protected, but it belongs on the tailnet only. On BZB-AI-1, n8n is served on `:8443` with `tailscale serve` (tailnet only). `tailscale serve status` must not show Funnel on 8443. (The portal uses Funnel on 10000; `docs/09-portal.md`.)
+- **n8n runs in its own compose stack** (`n8n`, network `n8n_default`), while Sarah's database, LiteLLM and the portal are in the `bzb-ai` stack (`bzb-ai_default`). Attach n8n to that network as well, so it reaches them by service name. In n8n's compose file:
+  ```yaml
+  services:
+    n8n:
+      networks: [default, bzb-ai]
+  networks:
+    bzb-ai:
+      external: true
+      name: bzb-ai_default
+  ```
+  Then `docker compose up -d` in n8n's folder. From n8n, the database is `db:5432`, LiteLLM is `http://litellm:4000`, and the broker is `http://sarah-portal:3001`.
 - n8n can reach Postgres, LiteLLM and the portal's token broker (`sarah-portal:3001`, `docs/09-portal.md`) by service name on the compose network.
 - A LiteLLM virtual key named **Scheduling Agent**, so this agent's usage shows up on its own.
 
@@ -18,7 +29,7 @@ Fill in every `FILL IN` in `n8n/credentials.json`:
 
 | Credential (fixed ID) | Fields |
 |---|---|
-| `SchedPostgres001` · Sarah · Postgres | host = Postgres service name, `sched_agent` / password |
+| `SchedPostgres001` · Sarah · Postgres | host `db` (reachable once n8n is on `bzb-ai_default`, §1), port 5432, database `sched_agent`, user `sched_agent` / password |
 | `SchedGraphApp001` · Sarah · Microsoft Graph | `accessTokenUrl` with your **tenant ID**, `clientId`, `clientSecret` (from `docs/02-m365-setup.md`). Grant type **Client Credentials**, scope `https://graph.microsoft.com/.default` |
 | `SchedLiteLLM0001` · Sarah · LiteLLM key | `Bearer <Scheduling Agent virtual key>` |
 | `SchedPortalKey01` · Sarah · Portal broker key | Header `X-Sarah-Broker-Key`, value = the portal's `PORTAL_BROKER_KEY`. Used only for calendar calls of employees on delegated access; mail never uses it |

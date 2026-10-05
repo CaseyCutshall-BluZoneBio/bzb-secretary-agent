@@ -24,7 +24,15 @@ END $$;
 UPDATE settings SET value = '"sarah.johnson@bluzonebio.com"' WHERE key = 'sarah_upn';
 UPDATE settings SET value = '"casey@bluzonebio.com"' WHERE key = 'alert_address';
 UPDATE settings SET value = '"https://portal.test:8443"' WHERE key = 'portal_base_url';
-DELETE FROM employees WHERE upn <> 'vic@bluzonebio.com';
+-- Put the seeded employee (the lowest id) back in its just-migrated state,
+-- under the fixtures' address, whatever has happened since (real address,
+-- portal sign-in, connected calendar). Anyone else is switched off, not
+-- deleted. All of this is rolled back.
+UPDATE employees SET enrolled = false WHERE id <> (SELECT min(id) FROM employees);
+UPDATE employees SET upn = 'vic@bluzonebio.com', mail = NULL, aad_object_id = NULL, calendar_auth = 'app',
+       calendar_connected_at = NULL, paused = false, needs_reconnect = false, reconnect_reason = NULL
+ WHERE id = (SELECT min(id) FROM employees);
+CREATE TEMP TABLE before_count AS SELECT count(*) AS n FROM employees;
 SELECT set_mode('live');
 
 -- -----------------------------------------------------------------------------
@@ -35,7 +43,7 @@ SELECT pg_temp.ok('004: recorded in schema_migrations (with 001–003)',
 SELECT pg_temp.ok('004: Vic''s existing row keeps the app-only calendar path',
   (SELECT calendar_auth = 'app' AND NOT paused AND NOT needs_reconnect FROM employees WHERE upn = 'vic@bluzonebio.com'));
 SELECT pg_temp.ok('004: Vic gets a per-employee signature line naming him',
-  (SELECT signature_title = 'Scheduling Assistant to Vic Suarez (AI)' FROM employees WHERE upn = 'vic@bluzonebio.com'));
+  (SELECT signature_title = 'Scheduling Assistant to ' || display_name || ' (AI)' FROM employees WHERE upn = 'vic@bluzonebio.com'));
 SELECT pg_temp.ok('004: portal settings seeded',
   setting_text('portal_internal_url') = 'http://sarah-portal:3001' AND setting('portal_admins') = '[]'::jsonb);
 SELECT pg_temp.ok('004: the originals are kept as *_base and wrapped',
@@ -66,7 +74,7 @@ SELECT pg_temp.ok('grants: PUBLIC cannot run portal functions',
 CREATE TEMP TABLE vic AS SELECT portal_sign_in('{"aad_object_id":"oid-vic","upn":"Vic@BluZoneBio.com","mail":"vic@bluzonebio.com","display_name":"Vic Suarez"}') AS e;
 SELECT pg_temp.ok('sign-in: attaches to Vic''s legacy row by UPN (no duplicate)',
   (SELECT (e->>'id')::int FROM vic) = (SELECT id FROM employees WHERE upn = 'vic@bluzonebio.com')
-  AND (SELECT count(*) = 1 FROM employees));
+  AND (SELECT count(*) FROM employees) = (SELECT n FROM before_count));
 SELECT pg_temp.ok('sign-in: Vic stays on app-only until he connects his calendar',
   (SELECT e->>'calendar_auth' = 'app' AND e->>'aad_object_id' = 'oid-vic' FROM vic));
 
@@ -122,7 +130,7 @@ SELECT pg_temp.ok('reconnect: one email to the employee''s mail address with the
      AND payload->'to'->0->>'address' = 'brad.lee@bluzonebio.com' AND payload->>'body_text' LIKE '%https://portal.test:8443/connect%'));
 SELECT pg_temp.ok('reconnect: a second failure is "already" and queues nothing more',
   (portal_mark_reconnect((SELECT (e->>'id')::int FROM brad), 'AADSTS700082', true)->>'already')::boolean
-  AND (SELECT count(*) = 1 FROM outbox WHERE purpose = 'reconnect'));
+  AND (SELECT count(*) = 1 FROM outbox WHERE purpose = 'reconnect' AND payload->'to'->0->>'address' = 'brad.lee@bluzonebio.com'));
 SELECT pg_temp.ok('reconnect: the code is recorded, not a message',
   (SELECT reconnect_reason = 'AADSTS700082' AND needs_reconnect FROM employees WHERE upn = 'brad@bluzonebio.com')
   AND (SELECT last_error_code = 'AADSTS700082' FROM portal_tokens WHERE home_account_id = 'oid-brad.tenant'));
@@ -131,7 +139,7 @@ SELECT pg_temp.ok('reconnect: a working refresh clears the flag',
   (SELECT NOT needs_reconnect AND reconnect_reason IS NULL FROM employees WHERE upn = 'brad@bluzonebio.com'));
 SELECT portal_mark_reconnect((SELECT (e->>'id')::int FROM brad), 'AADSTS50057', false);
 SELECT pg_temp.ok('account disabled: Casey is alerted instead of emailing a dead mailbox',
-  (SELECT count(*) = 1 FROM outbox WHERE purpose = 'reconnect')
+  (SELECT count(*) = 1 FROM outbox WHERE purpose = 'reconnect' AND payload->'to'->0->>'address' = 'brad.lee@bluzonebio.com')
   AND (SELECT count(*) = 1 FROM outbox WHERE purpose = 'alert' AND payload->>'subject' LIKE '%Brad Lee''s account looks disabled%'
          AND payload->'to'->0->>'address' = 'casey@bluzonebio.com'));
 SELECT portal_token_ok((SELECT (e->>'id')::int FROM brad));
@@ -228,7 +236,7 @@ SELECT pg_temp.ok('my threads: only the employee''s own',
   (SELECT jsonb_array_length(portal_my_threads((e->>'id')::int)) = 1 AND portal_my_threads((e->>'id')::int)->0->>'subject' = 'Brad intro' FROM brad)
   AND jsonb_array_length(portal_my_threads((SELECT id FROM employees WHERE upn = 'vic@bluzonebio.com'))) = 0);
 SELECT pg_temp.ok('admin overview: every employee with token health',
-  (SELECT jsonb_array_length(portal_overview()) = 2)
+  (SELECT jsonb_array_length(portal_overview()) = (SELECT count(*) FROM employees))
   AND (SELECT x->>'last_refresh_ok_at' IS NOT NULL FROM jsonb_array_elements(portal_overview()) x WHERE x->>'upn' = 'brad@bluzonebio.com'));
 
 SELECT line FROM results ORDER BY n;

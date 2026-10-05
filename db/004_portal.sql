@@ -82,7 +82,7 @@ CREATE INDEX IF NOT EXISTS portal_sessions_expiry_idx ON portal_sessions (expire
 -- settings
 -- -----------------------------------------------------------------------------
 INSERT INTO settings (key, value, note) VALUES
-  ('portal_base_url', '"https://bzb-ai-1.tail9f1964.ts.net:8443"',
+  ('portal_base_url', '"https://bzb-ai-1.tail9f1964.ts.net:10000"',
    'Public portal URL (Tailscale Funnel). Links in emails use it. Must match PORTAL_BASE_URL in the portal''s env.'),
   ('portal_internal_url', '"http://sarah-portal:3001"',
    'The portal''s token broker as n8n reaches it on the compose network. Never published.'),

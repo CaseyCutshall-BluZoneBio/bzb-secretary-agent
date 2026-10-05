@@ -65,8 +65,8 @@ Vic's existing app-only path keeps working (`calendar_auth = 'app'`) until he si
 
 **A dead token** (revoked, consent withdrawn, account disabled, Conditional Access) is detected by a daily refresh, ideally before any client writes. The employee is flagged once and gets one reconnect email. New requests are refused with a notice. A running thread that needs the calendar goes to `NEEDS_VIC` with a specific reason, and the client is told nothing. `NEEDS_VIC` is terminal for Sarah, so after reconnecting the employee finishes those threads by hand. A resumable "paused for reconnect" state was considered and left out: the daily refresh makes the case rare, and handing back follows the rule "when unsure, give it to a person". Two special cases: a disabled account alerts Casey instead of emailing a dead mailbox, and a bad *portal* secret flags nobody, because one expired secret must not email every employee.
 
-### D19 · 2026-09-30 · The portal is public, on Tailscale Funnel :8443
-Employees sign in from wherever they are, so the portal is internet-facing at `https://bzb-ai-1.tail9f1964.ts.net:8443`: Open WebUI holds Funnel's 443, and Funnel allows only 443/8443/10000. Being public changes the defaults:
+### D19 · 2026-09-30 · The portal is public, on Tailscale Funnel :10000
+Employees sign in from wherever they are, so the portal is internet-facing at `https://bzb-ai-1.tail9f1964.ts.net:10000`: Open WebUI holds Funnel's 443, and Funnel allows only 443/8443/10000. Being public changes the defaults:
 - **Access:** "Assignment required" plus a `Sarah users` group (mandatory), and generic errors.
 - **Browser hardening:** `__Host-` cookies (the hostname is shared with Open WebUI), CSRF on every POST, a strict CSP with no script, HSTS.
 - **Rate limits** on sign-in, keyed on the socket address.

@@ -24,7 +24,7 @@ const CLIENT = (over) => ({ intent: 'other', accepted_option: null, proposed_tim
 const BRAD = { ...VIC, id: 2, upn: 'brad@bluzonebio.com', mail: 'brad.lee@bluzonebio.com', display_name: 'Brad Lee', first_name: 'Brad',
                calendar_auth: 'delegated', calendar_connected_at: '2026-10-01T12:00:00Z', needs_reconnect: false, paused: false,
                signature_title: 'Scheduling Assistant to Brad Lee (AI)' };
-const PORTAL = { portal_internal_url: 'http://sarah-portal:3001', portal_base_url: 'https://bzb-ai-1.tail9f1964.ts.net:8443' };
+const PORTAL = { portal_internal_url: 'http://sarah-portal:3001', portal_base_url: 'https://bzb-ai-1.tail9f1964.ts.net:10000' };
 
 function bradCtx(over = {}, emp = BRAD) {
   const c = ctx({ employees: [VIC, emp],
@@ -68,7 +68,7 @@ test('dead token on a client reply → NEEDS_VIC with the reconnect reason; no c
   assert.equal(calReq.via, 'broker');
   assert.deepEqual(plan.thread.transitions, ['NEEDS_VIC']);
   assert.match(plan.thread.set.escalation_reason, /lost access to your calendar/);
-  assert.match(plan.thread.set.escalation_reason, /https:\/\/bzb-ai-1\.tail9f1964\.ts\.net:8443\/connect/);
+  assert.match(plan.thread.set.escalation_reason, /https:\/\/bzb-ai-1\.tail9f1964\.ts\.net:10000\/connect/);
   assert.equal(plan.outbox.filter((o) => o.kind === 'reply').length, 0, 'the client is not emailed');
   assert.equal(plan.outbox.filter((o) => o.kind === 'create_hold' || o.kind === 'create_booking').length, 0);
   const notice = plan.outbox.find((o) => o.purpose === 'vic_notice');
@@ -89,7 +89,7 @@ test('paused employee: a new trigger is ignored with a notice; the model is neve
   assert.equal(n.no_thread, true);
   assert.equal(n.payload.to[0].address, 'brad.lee@bluzonebio.com');
   assert.match(n.payload.subject, /^Paused, so I didn't start/);
-  assert.match(n.payload.body_text, /Resume me at https:\/\/bzb-ai-1\.tail9f1964\.ts\.net:8443\//);
+  assert.match(n.payload.body_text, /Resume me at https:\/\/bzb-ai-1\.tail9f1964\.ts\.net:10000\//);
   assert.equal(plan.outbox.length, 1, 'nothing else is queued');
 });
 

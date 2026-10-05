@@ -33,7 +33,7 @@ flowchart LR
   EX[Executor<br/>every minute] -->|claim outbox| DB
   EX -->|send mail as Sarah<br/>app-only| SI
   EX -->|holds + booking| BR
-  U[Employees] -->|sign in, connect,<br/>settings| PO[Portal<br/>Funnel :8443] --> DB
+  U[Employees] -->|sign in, connect,<br/>settings| PO[Portal<br/>Funnel :10000] --> DB
   T[Timers<br/>every 15 min] --> DB
   T --> PR
   R[Review page<br/>shadow mode] --> DB

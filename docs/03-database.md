@@ -4,37 +4,55 @@ Sarah gets **her own database and role** in the Postgres already running in the 
 
 ## Create and migrate
 
-From `/opt/bzb-ai/compose` on BZB-AI-1. Substitute the real Postgres service name and superuser.
+From `/opt/bzb-ai/compose` on BZB-AI-1, where the Postgres service is `db` (container `bzb-ai-db-1`). The repo is checked out at `/opt/bzb-ai/sarah`.
+
+**1. Roles and database.** Do this inside `psql`, so no password lands in your shell history. `$POSTGRES_USER` is the container's own superuser:
 
 ```bash
-# 1. role + database (two separate commands: CREATE DATABASE can't share a transaction)
-docker compose exec -T postgres psql -U <superuser> -c "CREATE ROLE sched_agent LOGIN PASSWORD '<from your vault>';"
-docker compose exec -T postgres psql -U <superuser> -c "CREATE DATABASE sched_agent OWNER sched_agent;"
+docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d postgres'
+```
+```sql
+CREATE ROLE sched_agent LOGIN;
+\password sched_agent
+CREATE ROLE sched_portal LOGIN;       -- the portal's role (docs/09-portal.md); create it before 004 so 004 can grant to it
+\password sched_portal
+CREATE DATABASE sched_agent OWNER sched_agent;
+\q
+```
 
-# 2. edit db/003_seed.sql first: every "FILL IN" (Vic's UPN, office address,
-#    alert address, LiteLLM URL + model alias, n8n tailnet URL)
+**2. Fill in `db/003_seed.sql`:** every `FILL IN` (office address, alert address, LiteLLM URL + model name, n8n tailnet URL). Values are SQL: text goes in single quotes, e.g. `'321 Ballenger Center Dr, Frederick, MD 21703'`, and an apostrophe inside text is doubled (`''`). Leave Vic's UPN as it is; step 4 sets the real one.
 
-# 3. the portal's role (docs/09-portal.md), before the migrations so 004 can grant to it
-docker compose exec -T postgres psql -U <superuser> -c "CREATE ROLE sched_portal LOGIN PASSWORD '<from your vault>';"
+**3. Apply, in order** (stops at the first error):
 
-# 4. apply, in order
-for f in db/0[0-9][0-9]_*.sql; do
-  docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < "$f"
-done
-
-# 5. self-test (each runs in a transaction and rolls back; every line should say PASS)
-for t in db/tests/*.sql; do
-  docker compose exec -T postgres psql -U sched_agent -d sched_agent -t -A < "$t" | grep -v '^$'
+```bash
+for f in /opt/bzb-ai/sarah/db/0[0-9][0-9]_*.sql; do
+  echo "== $f"
+  docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < "$f" || break
 done
 ```
+
+`003` isn't wrapped in a transaction. If it fails part-way (usually a quoting mistake), its settings rows are already in: fix the file, `DELETE FROM sched.settings;` (only on a fresh install), and re-run `003` and `004`.
+
+**4. Vic's real address,** then the self-tests:
+
+```bash
+docker compose exec -T db psql -U sched_agent -d sched_agent -c \
+  "UPDATE sched.employees SET upn = 'vic.suarez@bluzonebio.com' WHERE upn = 'vic@bluzonebio.com';"
+for t in /opt/bzb-ai/sarah/db/tests/*.sql; do
+  docker compose exec -T db psql -U sched_agent -d sched_agent -t -A < "$t" | grep -E '^(PASS|FAIL)' > /tmp/sched-test.out
+  echo "$t: $(grep -c '^PASS' /tmp/sched-test.out) PASS, $(grep -c '^FAIL' /tmp/sched-test.out) FAIL"
+done
+```
+
+Expect 84 PASS / 0 FAIL and 50 PASS / 0 FAIL. Each test file runs in one transaction and rolls back, so it never changes your data. Run them right after installing or upgrading, before real traffic: they count rows such as queued outbox items, so on a busy system they can report false FAILs.
 
 ### Upgrading an existing install
 
 Migrations are numbered and additive. Never edit an applied file; add the next one. `sched.schema_migrations` records what's applied. To upgrade, apply only the new files:
 
 ```bash
-docker compose exec -T postgres psql -U sched_agent -d sched_agent -c "SELECT version FROM sched.schema_migrations ORDER BY 1;"
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < db/004_portal.sql
+docker compose exec -T db psql -U sched_agent -d sched_agent -c "SELECT version FROM sched.schema_migrations ORDER BY 1;"
+docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/004_portal.sql
 ```
 
 `004_portal.sql` is idempotent (safe to run twice). It leaves existing rows working exactly as before: Vic keeps `calendar_auth = 'app'`. It also revokes `PUBLIC`'s default `EXECUTE` on every `sched` function. n8n connects as the owner, `sched_agent`, so it's unaffected; the portal role can only run `portal_*`.
@@ -85,7 +103,7 @@ INSERT INTO sched.settings (key, value, note) VALUES ('max_horizon_days', '90', 
 | `outbox_max_age_hours` | 24 | Client-facing mail unsent after this long is cancelled, not sent late |
 | `poller_lease_seconds` | 90 | After a poller crash, the next run can start after this long |
 | `poller_delta_link` | `null` | Graph delta cursor, managed by the poller. `null` = resync |
-| `portal_base_url` | `https://bzb-ai-1.tail9f1964.ts.net:8443` | The public portal URL. Links in emails (reconnect, pause notices) use it. Must match the portal's `PORTAL_BASE_URL` |
+| `portal_base_url` | `https://bzb-ai-1.tail9f1964.ts.net:10000` | The public portal URL. Links in emails (reconnect, pause notices) use it. Must match the portal's `PORTAL_BASE_URL` |
 | `portal_internal_url` | `http://sarah-portal:3001` | The token broker as n8n reaches it on the compose network |
 | `portal_admins` | `[]` | UPNs (lowercase) allowed on the portal's admin page, besides `alert_address` |
 

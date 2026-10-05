@@ -7,7 +7,7 @@
 | Sarah's mailbox | Exchange Online, shared mailbox (no license) | The only address that ever sends. Clients and Vic write to it |
 | App registration "BZB Scheduling Agent" | Entra + Exchange RBAC for Applications | App-only Graph token. Mail rights on Sarah's mailbox only. No calendar rights (optional temporary exception for Vic: `docs/02-m365-setup.md`) |
 | App registration "BZB Sarah Portal" | Entra, assignment required ("Sarah users" group) | Delegated sign-in: each employee consents to Sarah using **their own** calendar |
-| Portal + token broker | `sarah-portal` in the compose stack; UI public through Tailscale Funnel `:8443`, broker on the compose network only | Sign-in, calendar consent, settings, pause. The broker holds each employee's encrypted refresh token and makes their calendar calls for n8n (`docs/09-portal.md`) |
+| Portal + token broker | `sarah-portal` in the compose stack; UI public through Tailscale Funnel `:10000`, broker on the compose network only | Sign-in, calendar consent, settings, pause. The broker holds each employee's encrypted refresh token and makes their calendar calls for n8n (`docs/09-portal.md`) |
 | n8n (6 workflows) | BZB-AI-1 compose stack | Scheduling, retries, HTTP calls, error alerts |
 | `sched` schema | Postgres on BZB-AI-1 (own database + role) | All state, config, and invariants |
 | LiteLLM → local model | BZB-AI-1 | Classifies emails; writes email wording |

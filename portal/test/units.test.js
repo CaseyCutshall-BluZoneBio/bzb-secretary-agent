@@ -16,11 +16,11 @@ const H = require('./helpers');
 // ---------------------------------------------------------------------------
 test('config: base URL must be an HTTPS origin; the redirect URI is derived from it', () => {
   const c = H.testConfig();
-  assert.equal(c.origin, 'https://bzb-ai-1.tail9f1964.ts.net:8443');
-  assert.equal(c.redirectUri, 'https://bzb-ai-1.tail9f1964.ts.net:8443/auth/callback');
+  assert.equal(c.origin, 'https://bzb-ai-1.tail9f1964.ts.net:10000');
+  assert.equal(c.redirectUri, 'https://bzb-ai-1.tail9f1964.ts.net:10000/auth/callback');
   assert.equal(c.authority, `https://login.microsoftonline.com/${H.TENANT}`);
-  assert.throws(() => H.testConfig({ PORTAL_BASE_URL: 'http://bzb-ai-1.tail9f1964.ts.net:8443' }), /must be https/);
-  assert.throws(() => H.testConfig({ PORTAL_BASE_URL: 'https://bzb-ai-1.tail9f1964.ts.net:8443/portal' }), /origin only/);
+  assert.throws(() => H.testConfig({ PORTAL_BASE_URL: 'http://bzb-ai-1.tail9f1964.ts.net:10000' }), /must be https/);
+  assert.throws(() => H.testConfig({ PORTAL_BASE_URL: 'https://bzb-ai-1.tail9f1964.ts.net:10000/portal' }), /origin only/);
   assert.throws(() => H.testConfig({ PORTAL_BASE_URL: 'http://localhost:3000' }), /must be https/);
   assert.equal(H.testConfig({ PORTAL_BASE_URL: 'http://localhost:3000', PORTAL_ALLOW_INSECURE_LOCALHOST: '1' }).origin, 'http://localhost:3000');
   assert.throws(() => H.testConfig({ ENTRA_TENANT_ID: 'bluzonebio.com' }), /tenant GUID/);

@@ -1,6 +1,6 @@
 # Portal: self-service sign-in and delegated calendars
 
-**Result:** any BZB employee in the "Sarah users" group opens `https://bzb-ai-1.tail9f1964.ts.net:8443`, signs in with Microsoft 365, connects their calendar, sets their preferences, and can CC Sarah right away. No PowerShell or SQL per person.
+**Result:** any BZB employee in the "Sarah users" group opens `https://bzb-ai-1.tail9f1964.ts.net:10000`, signs in with Microsoft 365, connects their calendar, sets their preferences, and can CC Sarah right away. No PowerShell or SQL per person.
 
 What changes and what doesn't:
 
@@ -13,7 +13,7 @@ What changes and what doesn't:
 
 ```mermaid
 flowchart LR
-  U[Employee browser] -- HTTPS :8443 --> F[tailscaled<br/>Funnel, TLS ends here]
+  U[Employee browser] -- HTTPS :10000 --> F[tailscaled<br/>Funnel, TLS ends here]
   F -- HTTP 127.0.0.1:3000 --> P[Portal UI<br/>sarah-portal :3000]
   P --> DB[(sched.portal_*<br/>functions)]
   N[n8n Processor / Executor] -- "employee + op<br/>X-Sarah-Broker-Key" --> B[Token broker<br/>sarah-portal :3001<br/>compose network only]
@@ -31,7 +31,7 @@ This is a **second, separate** app registration. Leave "BZB Scheduling Agent" ex
 1. **Entra ID → App registrations → New registration**
    - Name: `BZB Sarah Portal`
    - Supported account types: **Accounts in this organizational directory only** (single tenant)
-   - Redirect URI: platform **Web**, value exactly `https://bzb-ai-1.tail9f1964.ts.net:8443/auth/callback`
+   - Redirect URI: platform **Web**, value exactly `https://bzb-ai-1.tail9f1964.ts.net:10000/auth/callback`
      (Entra requires HTTPS for a non-localhost redirect URI. It must match `PORTAL_BASE_URL` + `/auth/callback` character for character, port included.)
 2. **Authentication:** leave "Access tokens" and "ID tokens" (implicit grant) **unchecked**. "Allow public client flows": **No**. The portal uses the authorization-code flow with PKCE as a confidential client.
 3. **Certificates & secrets → New client secret**, 12 months. Copy the value into `portal.env` (§3). Put the expiry on your calendar (§8).
@@ -53,15 +53,13 @@ The portal connects as its own role, which can execute the `sched.portal_*` func
 
 ```bash
 cd /opt/bzb-ai/compose
-# 1. the role (superuser; once)
-docker compose exec -T postgres psql -U <superuser> -c "CREATE ROLE sched_portal LOGIN PASSWORD '<from your vault>';"
+# 1. the role (once). Skip it if you created sched_portal while following docs/03-database.md.
+docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "CREATE ROLE sched_portal LOGIN;"'
+docker compose exec -it db sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "\\password sched_portal"'
 # 2. the migration (as sched_agent). Safe to re-run; re-run it whenever you create the role after the fact,
 #    because the grants apply only if the role exists.
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/004_portal.sql
-# 3. self-test (both files roll back; every line should say PASS)
-for t in db_tests portal_tests; do
-  docker compose exec -T postgres psql -U sched_agent -d sched_agent -t -A < /opt/bzb-ai/sarah/db/tests/$t.sql | grep -v '^$'
-done
+docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/004_portal.sql
+# 3. self-test: see docs/03-database.md step 4
 ```
 
 `004` is additive: Vic's row keeps `calendar_auth = 'app'`, and nothing changes until someone connects. See `docs/03-database.md` for the new settings and columns.
@@ -83,7 +81,7 @@ The repo is checked out at `/opt/bzb-ai/sarah` on BZB-AI-1.
    ```
 
    Put `PORTAL_TOKEN_KEYS` in your vault as well. If it's lost, every stored token is unreadable and every employee has to reconnect.
-2. Merge `deploy/compose.portal.yml` into the stack's compose file (fix `PGHOST` to the Postgres service name), then:
+2. Merge `deploy/compose.portal.yml` into the `bzb-ai` stack's compose file (`PGHOST` is already `db`), then:
 
    ```bash
    docker compose build sarah-portal && docker compose up -d sarah-portal
@@ -100,7 +98,7 @@ The repo is checked out at `/opt/bzb-ai/sarah` on BZB-AI-1.
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `PORTAL_BASE_URL` | yes | The public origin, `https://bzb-ai-1.tail9f1964.ts.net:8443`. HTTPS, no path. **Every** absolute URL (redirects, the OAuth redirect URI) is built from this, never from request headers |
+| `PORTAL_BASE_URL` | yes | The public origin, `https://bzb-ai-1.tail9f1964.ts.net:10000`. HTTPS, no path. **Every** absolute URL (redirects, the OAuth redirect URI) is built from this, never from request headers |
 | `ENTRA_TENANT_ID` | yes | Tenant GUID. Sign-in uses the single-tenant authority `https://login.microsoftonline.com/<tenant>` |
 | `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` | yes | The BZB Sarah Portal app |
 | `PORTAL_TOKEN_KEYS` | yes | `id:base64key[,id:base64key…]`, 32-byte AES-256-GCM keys. The first encrypts; all decrypt (§8) |
@@ -116,24 +114,24 @@ The repo is checked out at `/opt/bzb-ai/sarah` on BZB-AI-1.
 
 ## 4. Serving with Tailscale Funnel
 
-Open WebUI already uses Funnel on 443, and Funnel only allows ports 443, 8443 and 10000, so the portal gets **8443**. The portal runs at the root path.
+Funnel only allows HTTPS ports 443, 8443 and 10000. Open WebUI has 443 (public), and n8n is served on 8443 **tailnet-only** (`tailscale serve`, never Funnel). So the portal gets **10000**, at the root path.
 
 ```bash
 # serve AND expose publicly, in one command (current CLI syntax)
-sudo tailscale funnel --bg --https=8443 http://127.0.0.1:3000
+sudo tailscale funnel --bg --https=10000 http://127.0.0.1:3000
 
-# check: exactly two public entries, Open WebUI on 443 and the portal on 8443 → 127.0.0.1:3000
+# check: exactly two public entries, Open WebUI on 443 and the portal on 10000 → 127.0.0.1:3000
 tailscale funnel status
 ```
 
-`tailscale funnel status` must show `https://bzb-ai-1.tail9f1964.ts.net` (Open WebUI) and `https://bzb-ai-1.tail9f1964.ts.net:8443` → `http://127.0.0.1:3000`, both marked **Funnel on**, and nothing else. 3001 must never appear.
+`tailscale funnel status` must show `https://bzb-ai-1.tail9f1964.ts.net` (Open WebUI) and `https://bzb-ai-1.tail9f1964.ts.net:10000` → `http://127.0.0.1:3000` marked **Funnel on**. n8n's `:8443` may appear, but **tailnet only**, never Funnel. 3001 must never appear.
 
-Don't use `tailscale funnel --bg 8443`. A bare number is read as the *local target port*, served on the default HTTPS port, so that command would point the public 443 (Open WebUI's) at `localhost:8443`.
+Don't use `tailscale funnel --bg 10000`. A bare number is read as the *local target port*, served on the default HTTPS port, so that command would point the public 443 (Open WebUI's) at `localhost:10000`.
 
 **Turn the portal off** (Open WebUI's 443 is untouched):
 
 ```bash
-sudo tailscale funnel --https=8443 off
+sudo tailscale funnel --https=10000 off
 ```
 
 Don't use `tailscale serve reset`: it removes Open WebUI's config as well. With the portal off, nobody can sign in or connect. Sarah keeps running, because the broker is internal and unaffected.
@@ -154,7 +152,7 @@ Don't use `tailscale serve reset`: it removes Open WebUI's config as well. With 
 
 ### Assume it will be found
 
-Funnel's certificate is public, and `*.ts.net` hostnames appear in certificate-transparency logs. Anyone can learn `bzb-ai-1.tail9f1964.ts.net` exists and probe `:8443`. The design assumes this:
+Funnel's certificate is public, and `*.ts.net` hostnames appear in certificate-transparency logs. Anyone can learn `bzb-ai-1.tail9f1964.ts.net` exists and probe `:10000` (and `:8443`, which must stay tailnet-only). The design assumes this:
 - "Assignment required" plus the "Sarah users" group means only BZB members can even complete sign-in.
 - No unauthenticated page leaks anything.
 - The broker isn't exposed.
@@ -166,7 +164,7 @@ To serve it as, say, `https://sarah.bluzonebio.com`:
 1. In the Entra app, add the new redirect URI `https://sarah.bluzonebio.com/auth/callback`. Keep the old one until the switch is done.
 2. Change `PORTAL_BASE_URL` in `portal.env`, and the `portal_base_url` setting, then restart the portal. Links in emails sent before the switch still point at the old host.
 3. Put the new front end (reverse proxy with its own certificate) in front of `127.0.0.1:3000`.
-4. Then `sudo tailscale funnel --https=8443 off`, and remove the old redirect URI from Entra.
+4. Then `sudo tailscale funnel --https=10000 off`, and remove the old redirect URI from Entra.
 5. Sessions don't carry over (cookies are bound to the host), so everyone signs in once more. Stored calendar tokens are unaffected.
 
 ## 5. Using it
@@ -220,4 +218,4 @@ Vic's row comes from `db/003_seed.sql` with `calendar_auth = 'app'`. On a fresh 
 - [ ] Conditional Access policies that target all cloud apps: a **sign-in frequency** policy would expire every employee's portal token on that schedule (each would get a reconnect email). Exclude BZB Sarah Portal from sign-in frequency, or accept the cadence
 - [ ] UPN equals primary SMTP for every employee. If not, the portal stores the mail address for matching, but check the first few rows on the admin page
 - [ ] Guest accounts exist? (They're rejected; this just tells you whether you'll get "why can't I sign in" questions)
-- [ ] `tailscale funnel status` shows only 443 (Open WebUI) and 8443 → 127.0.0.1:3000
+- [ ] `tailscale funnel status` shows only 443 (Open WebUI) and 10000 → 127.0.0.1:3000

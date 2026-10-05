@@ -11,19 +11,20 @@ services:
     restart: unless-stopped
     env_file: ./portal.env
     environment:
-      PORTAL_BASE_URL: https://bzb-ai-1.tail9f1964.ts.net:8443
+      PORTAL_BASE_URL: https://bzb-ai-1.tail9f1964.ts.net:10000
       PORTAL_PORT: "3000"
       PORTAL_BROKER_PORT: "3001"
-      PGHOST: postgres                       # the Postgres service name in this stack
+      PGHOST: db                             # the Postgres service name in the bzb-ai stack
       PGDATABASE: sched_agent
       PGUSER: sched_portal
     ports:
-      # Public UI: loopback only. Tailscale Funnel maps :8443 → 127.0.0.1:3000.
+      # Public UI: loopback only. Tailscale Funnel maps :10000 → 127.0.0.1:3000.
       - "127.0.0.1:3000:3000"
       # 3001 (the token broker) is deliberately NOT published. n8n reaches it
-      # as http://sarah-portal:3001 on the compose network.
+      # as http://sarah-portal:3001 on bzb-ai_default (n8n's own stack joins
+      # that network; docs/04-n8n-setup.md §1).
     depends_on:
-      - postgres
+      - db
     read_only: true
     tmpfs:
       - /tmp

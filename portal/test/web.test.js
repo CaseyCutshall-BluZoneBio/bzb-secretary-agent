@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const H = require('./helpers');
 const { tokenAad } = require('../src/crypto');
 
-const ORIGIN = 'https://bzb-ai-1.tail9f1964.ts.net:8443';
+const ORIGIN = 'https://bzb-ai-1.tail9f1964.ts.net:10000';
 const SPOOF = { Host: 'evil.example', 'X-Forwarded-Host': 'evil.example', 'X-Forwarded-Proto': 'http', 'X-Forwarded-For': '6.6.6.6', Forwarded: 'host=evil.example;proto=http' };
 
 let P;

@@ -31,7 +31,7 @@ function parseBaseUrl(raw, allowInsecureLocalhost) {
     throw new ConfigError('PORTAL_BASE_URL must be https:// (Entra only accepts an HTTPS redirect URI)');
   }
   if (u.pathname !== '/' || u.search || u.hash || u.username || u.password) {
-    throw new ConfigError('PORTAL_BASE_URL must be an origin only, e.g. https://bzb-ai-1.tail9f1964.ts.net:8443');
+    throw new ConfigError('PORTAL_BASE_URL must be an origin only, e.g. https://bzb-ai-1.tail9f1964.ts.net:10000');
   }
   return u.origin;
 }

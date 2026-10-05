@@ -17,7 +17,7 @@ const KEY2 = crypto.randomBytes(32).toString('base64');
 
 function testConfig(over = {}) {
   return loadConfig({
-    PORTAL_BASE_URL: 'https://bzb-ai-1.tail9f1964.ts.net:8443',
+    PORTAL_BASE_URL: 'https://bzb-ai-1.tail9f1964.ts.net:10000',
     ENTRA_TENANT_ID: TENANT, ENTRA_CLIENT_ID: 'client-id', ENTRA_CLIENT_SECRET: 'client-secret',
     PORTAL_TOKEN_KEYS: `k1:${KEY1}`, PORTAL_SESSION_SECRET: crypto.randomBytes(32).toString('base64'),
     PORTAL_BROKER_KEY: 'broker-key-0123456789-0123456789-abcdef', PORTAL_PORT: '1', PORTAL_BROKER_PORT: '1',

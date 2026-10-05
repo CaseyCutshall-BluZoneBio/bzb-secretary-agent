@@ -8,9 +8,9 @@ SELECT sched.set_mode('off');   -- kill switch: poller, executor and timers stop
 
 ## Stage 0 · Portal (before or alongside Stage 1)
 
-Set up the portal per `docs/09-portal.md`: the Entra app with assignment required, the `Sarah users` group, `004_portal.sql`, the container, the broker credential in n8n, and Funnel on 8443. Then:
+Set up the portal per `docs/09-portal.md`: the Entra app with assignment required, the `Sarah users` group, `004_portal.sql`, the container, the broker credential in n8n, and Funnel on 10000. Then:
 
-- [ ] `tailscale funnel status` shows only Open WebUI on 443 and `:8443 → 127.0.0.1:3000`
+- [ ] `tailscale funnel status` shows only Open WebUI on 443 and `:10000 → 127.0.0.1:3000`
 - [ ] From outside the tailnet (phone on mobile data): the portal's sign-in page loads; `/settings` redirects to `/login`; `:3001` doesn't answer
 - [ ] An account **not** in `Sarah users` can't sign in, and sees the generic error
 - [ ] You (in the group) sign in, connect your calendar, and see your Outlook hours prefilled; the admin page shows you as "OK"

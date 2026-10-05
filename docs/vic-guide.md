@@ -4,7 +4,7 @@ Sarah is your AI scheduling assistant. She finds a time with people outside BZB 
 
 ## Set up (once, two minutes)
 
-1. Open **https://bzb-ai-1.tail9f1964.ts.net:8443** and sign in with your Blu Zone Bio Microsoft account. (If it says sign-in didn't work, ask Casey to add you to "Sarah users".)
+1. Open **https://bzb-ai-1.tail9f1964.ts.net:10000** and sign in with your Blu Zone Bio Microsoft account. (If it says sign-in didn't work, ask Casey to add you to "Sarah users".)
 2. Click **Connect your calendar** and accept. This lets Sarah see when you're free, place private holds, and book meetings you confirm. She can't read your email.
 3. Check **Settings**: your working hours and timezone come from Outlook; adjust meeting length, gaps, and how far ahead she looks. Save.
 

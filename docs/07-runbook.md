@@ -94,7 +94,7 @@ SELECT upn, calendar_auth, calendar_connected_at, needs_reconnect, needs_reconne
    and drop the hold releases that will never run: `UPDATE sched.outbox SET status = 'cancelled', last_error = 'offboarded' WHERE kind = 'delete_hold' AND status = 'pending' AND payload->>'employee_upn' = '<upn>';`
 4. Hand their open threads to someone: `SELECT * FROM sched.status WHERE employee_id = …` (close each by hand, as above, after telling the client).
 
-**Turn the public portal off** (Sarah keeps running): `sudo tailscale funnel --https=8443 off`. Turn it back on with `sudo tailscale funnel --bg --https=8443 http://127.0.0.1:3000`.
+**Turn the public portal off** (Sarah keeps running): `sudo tailscale funnel --https=10000 off`. Turn it back on with `sudo tailscale funnel --bg --https=10000 http://127.0.0.1:3000`.
 
 ## Changing behavior
 
@@ -124,6 +124,6 @@ After upgrading, run the end-to-end suite locally against the new version (`docs
 ## Adding an employee
 
 1. Add them to the **Sarah users** group in Entra.
-2. Send them the portal link (`https://bzb-ai-1.tail9f1964.ts.net:8443`) and `docs/vic-guide.md`.
+2. Send them the portal link (`https://bzb-ai-1.tail9f1964.ts.net:10000`) and `docs/vic-guide.md`.
 
 They sign in, connect their calendar, check their settings, and can CC Sarah straight away. Confirmation emails, holds and bookings all use the thread's own employee, and client emails are signed with their name.

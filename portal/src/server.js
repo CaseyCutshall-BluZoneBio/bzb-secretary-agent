@@ -1,7 +1,7 @@
 'use strict';
 // Entry point. Two separate HTTP servers on two ports:
 //   public  (PORTAL_PORT, 3000)        UI. Compose publishes it on 127.0.0.1 only;
-//                                      Tailscale Funnel serves it on :8443.
+//                                      Tailscale Funnel serves it on :10000.
 //   broker  (PORTAL_BROKER_PORT, 3001) internal token broker for n8n. Never
 //                                      published; reachable on the compose network only.
 const http = require('http');
