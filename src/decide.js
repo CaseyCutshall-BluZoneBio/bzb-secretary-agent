@@ -589,7 +589,10 @@ function facts(S, purpose, extra = {}) {
   const t = threadView(S);
   const emp = employeeOf(S);
   const names = t.client_names || {};
-  const firsts = (t.client_addresses || []).map((a) => U.firstName(names[a], a));
+  // Unknown names are left out ("Dana" rather than "Dana and there"); with no
+  // known name at all the greeting is "Hi there".
+  const known = (t.client_addresses || []).map((a) => U.firstName(names[a], a)).filter((n) => n !== 'there');
+  const firsts = known.length ? known : ['there'];
   return {
     purpose,
     employee_first: emp.first_name,

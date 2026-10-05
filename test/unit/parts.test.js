@@ -235,3 +235,33 @@ test('llm: token budget and extra body come from settings; running out of tokens
   assert.match(out.error, /whole token budget.*llm_max_tokens/);
   assert.equal(L.parseModelJson({ choices: [{ finish_reason: 'stop', message: { content: '' } }] }, 'trigger').error, 'empty model response');
 });
+
+test('first names: display name first; the address only when it clearly holds a name; else "there"', () => {
+  const U = require('../../src/util');
+  assert.equal(U.firstName('Dana Whitfield', 'dana@acme-bio.com'), 'Dana');
+  assert.equal(U.firstName('Dr. Kim Lee', 'k@x.com'), 'Kim');
+  assert.equal(U.firstName('', 'dana.whitfield@acme-bio.com'), 'Dana');
+  assert.equal(U.firstName('', 'lou_park@x.com'), 'Lou');
+  assert.equal(U.firstName('', 'cmcutshall5@gmail.com'), 'there');
+  assert.equal(U.firstName('', 'jsmith@x.com'), 'there');
+  assert.equal(U.firstName('', 'info@x.com'), 'there');
+  assert.equal(U.firstName('cmcutshall5@gmail.com', 'cmcutshall5@gmail.com'), 'there', 'a display name that is just the address');
+  assert.equal(U.joinNames([U.firstName('', 'a1@x.com')]), 'there');
+});
+
+test('greeting: unknown client names are left out; none known → "there"', () => {
+  const D = require('../../src/decide');
+  const { clientCtx, llm, NO_CONSTRAINTS } = require('./fixtures');
+  const CL = (o) => ({ intent: 'reject_all', accepted_option: null, proposed_times: [], constraints: NO_CONSTRAINTS, other_timezone: null, question: null, summary: 'x', ...o });
+  const go = (thread) => {
+    const c = clientCtx('None of those work', { thread });
+    c.message = { ...c.message, from_address: thread.client_addresses[thread.client_addresses.length - 1], from_name: '' };
+    c.reply_target = c.message;
+    let S = D.start(c);
+    S = D.interpret(S, llm(CL({})));
+    S = D.act(S, { value: [] });
+    return S.email.facts.names;
+  };
+  assert.equal(go({ client_addresses: ['cmcutshall5@gmail.com'], client_names: {} }), 'there');
+  assert.equal(go({ client_addresses: ['dana@acme-bio.com', 'x9@y.com'], client_names: { 'dana@acme-bio.com': 'Dana Whitfield' } }), 'Dana');
+});

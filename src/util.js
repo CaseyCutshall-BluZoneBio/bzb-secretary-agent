@@ -34,7 +34,9 @@ function textToHtml(text) {
     .join('\n');
 }
 
-// "Dana Whitfield" → "Dana"; falls back to the local part of the address.
+// "Dana Whitfield" → "Dana". Without a usable display name, the address is
+// used only when it clearly holds a name ("dana.whitfield@" → "Dana");
+// "cmcutshall5@" or "jsmith@" give "there" (as in "Hi there").
 function firstName(name, address) {
   const n = String(name || '').trim();
   if (n && !n.includes('@')) {
@@ -43,8 +45,11 @@ function firstName(name, address) {
     if (first && /^[\p{L}'-]+$/u.test(first)) return first;
   }
   const local = lower(address).split('@')[0] || '';
-  const part = local.split(/[._-]/)[0] || local;
-  return part ? part.charAt(0).toUpperCase() + part.slice(1) : '';
+  const parts = local.split(/[._-]/);
+  if (parts.length >= 2 && /^[a-z]{2,}$/.test(parts[0]) && /^[a-z]{2,}$/.test(parts[1])) {
+    return parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+  }
+  return 'there';
 }
 
 function joinNames(names) {
