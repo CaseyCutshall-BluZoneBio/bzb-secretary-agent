@@ -63,4 +63,23 @@ function normalizeMessage(m) {
   };
 }
 
-module.exports = { deltaUrl, splitDelta, messageUrl, normalizeMessage };
+// A readable reason for a failed Graph call (n8n HTTP node, fullResponse +
+// continue on error). When the request never reached Graph, n8n's error object
+// carries no message at all; by far the most common cause is the credential
+// failing to get a token, so say that, and what to check.
+function describeGraphFailure(r) {
+  if (r && r.statusCode !== undefined) {
+    const e = r.body && r.body.error;
+    const what = e ? `${e.code || ''}${e.message ? `: ${e.message}` : ''}` : JSON.stringify(r.body || '').slice(0, 300);
+    const hint = r.statusCode === 401 ? ' (token rejected: check the credential\'s scope is https://graph.microsoft.com/.default)'
+      : r.statusCode === 403 ? ' (Exchange scoping: the app is not allowed on this mailbox yet; it can take up to ~2 h after setup)' : '';
+    return `HTTP ${r.statusCode} ${what}${hint}`.slice(0, 600);
+  }
+  const msg = r && r.error && (r.error.message || r.error.description);
+  if (msg) return String(msg).slice(0, 600);
+  return 'the request never reached Microsoft Graph. Usually the n8n credential "Sarah · Microsoft Graph (app-only)" '
+    + 'could not get a token: check the Client Secret (the secret\'s Value, not its Secret ID), the tenant ID in the '
+    + 'Access Token URL, and the Client ID. scripts/check-setup.sh tests these directly.';
+}
+
+module.exports = { deltaUrl, splitDelta, messageUrl, normalizeMessage, describeGraphFailure };

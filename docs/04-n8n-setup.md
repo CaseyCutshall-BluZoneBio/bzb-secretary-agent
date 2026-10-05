@@ -34,13 +34,19 @@ Fill in every `FILL IN` in `n8n/credentials.json`:
 | `SchedLiteLLM0001` · Sarah · LiteLLM key | `Bearer <Scheduling Agent virtual key>` |
 | `SchedPortalKey01` · Sarah · Portal broker key | Header `X-Sarah-Broker-Key`, value = the portal's `PORTAL_BROKER_KEY`. Used only for calendar calls of employees on delegated access; mail never uses it |
 
-The workflows reference these IDs, so import them rather than creating them by hand:
+The client secret is the secret's **Value** (about 40 characters, shown once when you create it), **not** its Secret ID (a GUID). Using the Secret ID is the most common setup mistake. The Poller then fails with "the request never reached Microsoft Graph".
+
+The workflows reference these IDs, so import them rather than creating them by hand. On BZB-AI-1, n8n's stack is `/opt/n8n` and the repo is `/opt/bzb-ai/sarah`:
 
 ```bash
-docker compose cp n8n/credentials.json n8n:/tmp/sarah-creds.json
+cp /opt/bzb-ai/sarah/n8n/credentials.template.json /root/sarah-creds.json && chmod 600 /root/sarah-creds.json
+nano /root/sarah-creds.json                     # replace every FILL IN
+cd /opt/n8n
+docker compose cp /root/sarah-creds.json n8n:/tmp/sarah-creds.json
+docker compose exec -u root n8n chown node:node /tmp/sarah-creds.json   # n8n runs as "node"; root-only files give EACCES
 docker compose exec n8n n8n import:credentials --input=/tmp/sarah-creds.json
 docker compose exec n8n rm /tmp/sarah-creds.json
-shred -u n8n/credentials.json      # it holds the secret in plain text
+shred -u /root/sarah-creds.json                 # it holds the secrets in plain text
 ```
 
 n8n encrypts the credentials on import.
@@ -48,31 +54,36 @@ n8n encrypts the credentials on import.
 ## 3. Workflows
 
 ```bash
-npm install && npm run build          # only if you changed src/; the committed JSON is current
-docker compose cp n8n/workflows n8n:/tmp/sarah-workflows
+cd /opt/n8n
+docker compose cp /opt/bzb-ai/sarah/n8n/workflows n8n:/tmp/sarah-workflows
+docker compose exec -u root n8n chown -R node:node /tmp/sarah-workflows
 docker compose exec n8n n8n import:workflow --separate --input=/tmp/sarah-workflows
 docker compose exec n8n sh -c 'for id in SarahErrors00001 SarahExecutor001 SarahPoller00001 SarahProcessor01 SarahReview00001 SarahTimers00001; do n8n publish:workflow --id=$id; done'
 docker compose restart n8n            # the running instance picks up CLI publishes on restart
 ```
 
-You should now see six workflows named **Sarah · …**, all published. The IDs are fixed (`SarahPoller00001` …), so the workflows find each other and their error workflow without any manual wiring.
+You should now see six workflows named **Sarah · …**, all published. The IDs are fixed (`SarahPoller00001` …), so the workflows find each other and their error workflow without any manual wiring. (The committed JSON is current; run `npm run build` only if you changed `src/`.)
 
-**Re-importing after changes** (for example, after editing a prompt): run the same three commands. Import overwrites by ID; then re-publish and restart.
+**Re-importing after changes** (for example, after `git pull`): run the same commands. Import overwrites by ID; then re-publish and restart.
 
-## 4. Smoke checks (mode is still `off`)
+## 4. Check everything at once
 
-1. **Executions list:** Poller and Executor run every minute and finish in milliseconds. In `off` they do nothing.
-2. **Graph credential:** open **Sarah · Poller**, then **Graph: inbox delta** → *Execute step*. Expect `statusCode: 200`.
-   - `401`: the tenant ID or secret is wrong.
-   - `403 ErrorAccessDenied`: the RBAC scope hasn't applied yet, or `$SpObjectId` was the wrong GUID.
-3. **LiteLLM:** from the n8n container,
-   ```bash
-   curl -s $LITELLM_URL -H "Authorization: Bearer <key>" -H 'Content-Type: application/json' \
-     -d '{"model":"<alias>","messages":[{"role":"user","content":"Say {\"ok\":true} as JSON"}],"response_format":{"type":"json_schema","json_schema":{"name":"t","schema":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false},"strict":true}}}'
-   ```
-   If this errors on `response_format`, set `llm_json_schema` to `false` (`docs/03-database.md`). The parser handles plain output, `<think>` blocks, and code fences either way.
-4. **Error workflow:** Settings → *Error workflow* on each Sarah workflow is **Sarah · Errors**. It's set in the JSON; this just confirms it.
-5. **Broker:** from the n8n container, `wget -qO- http://sarah-portal:3001/internal/v1/health` → `{"ok":true}`.
+```bash
+sudo bash /opt/bzb-ai/sarah/scripts/check-setup.sh
+```
+
+It's read-only. It asks for the tenant ID, the mail app's client secret **Value** (hidden, never saved) and, optionally, the LiteLLM key. It then prints PASS / FAIL with a fix for each:
+
+- **Microsoft:** the app gets a token, can read Sarah's inbox, and is blocked from other mailboxes.
+- **Database:** migrations applied, no `FILL IN` left, the mode, the employees.
+- **n8n:** version, network reach to `db` and `litellm`, all 6 workflows, LiteLLM key + model.
+- **Portal:** container up, the broker isn't published, n8n reaches it, Funnel.
+
+Run it after each setup step; anything not set up yet shows SKIP.
+
+Don't test the workflows with **Execute step** in the editor. The Poller skips everything while the mode is `off`, and a manual run while the scheduled run holds its lock (`poller_lease_seconds`) also skips, and both look like "Node was not executed". To exercise the real path, switch to `dry_run` (nothing is sent; `docs/05-rollout.md` Stage 1) and watch **Executions**. A failed Graph call now names its cause in the error.
+
+**LiteLLM `response_format`:** if the model's backend rejects `json_schema` (the processor's classification fails with a 400), set `llm_json_schema` to `false` (`docs/03-database.md`). The parser handles plain output, `<think>` blocks, and code fences either way.
 
 ## How calendar calls are routed
 

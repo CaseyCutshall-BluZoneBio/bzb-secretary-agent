@@ -81,7 +81,7 @@ It starts in mode `off`. Nothing reads or sends mail until you change that delib
 
 ```bash
 npm install
-npm test                 # 90 unit tests (slots, routing, decisions, validator, Graph requests) + 38 portal tests
+npm test                 # 91 unit tests (slots, routing, decisions, validator, Graph requests) + 38 portal tests
 npm run test:db          # 129 database tests (needs a Postgres; see docs/06-testing.md)
 N8N_BIN=... npm run test:e2e       # real n8n + mock Graph/LLM/broker, 12 scenarios (docs/06-testing.md)
 ```

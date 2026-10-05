@@ -207,3 +207,13 @@ test('poller: delta split + message normalization', () => {
   assert.equal(n.headers.auth_as, 'Internal');
   assert.equal(n.body_text, 'new part\nline 2');
 });
+
+test('poller: Graph failures are described in words, never as an empty error object', () => {
+  const Pl = require('../../src/poller');
+  const silent = { error: { level: 'warning', shouldReport: false, tags: {} } };   // what n8n gives when no request was made
+  assert.match(Pl.describeGraphFailure(silent), /never reached Microsoft Graph.*Client Secret.*Value, not its Secret ID/);
+  assert.match(Pl.describeGraphFailure({ statusCode: 403, body: { error: { code: 'ErrorAccessDenied', message: 'Access is denied.' } } }),
+    /^HTTP 403 ErrorAccessDenied: Access is denied\. \(Exchange scoping/);
+  assert.match(Pl.describeGraphFailure({ statusCode: 401, body: { error: { code: 'InvalidAuthenticationToken' } } }), /^HTTP 401 InvalidAuthenticationToken.*scope/);
+  assert.equal(Pl.describeGraphFailure({ error: { message: 'getaddrinfo ENOTFOUND graph.microsoft.com' } }), 'getaddrinfo ENOTFOUND graph.microsoft.com');
+});

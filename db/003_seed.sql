@@ -24,13 +24,13 @@ INSERT INTO settings (key, value, note) VALUES
   ('signature_title',    '"Scheduling Assistant to Vic Suarez (AI)"', 'Second line of the signature — the AI disclosure.'),
   ('company_name',       '"Blu Zone Bio"',                 'Third line of the signature.'),
   ('internal_domains',   '["bluzonebio.com"]',             'Addresses on these domains are internal (never treated as clients).'),
-  ('alert_address',      '"FILL IN: casey@bluzonebio.com"', 'Gets error alerts and shadow-mode review emails.'),
+  ('alert_address',      '"casey@bluzonebio.com"', 'Gets error alerts and shadow-mode review emails.'),
 
   -- endpoints -----------------------------------------------------------------
   ('graph_base_url',     '"https://graph.microsoft.com/v1.0"', 'Microsoft Graph base URL.'),
   ('litellm_url',        '"http://litellm:4000/v1/chat/completions"', 'FILL IN if n8n reaches LiteLLM by another host name.'),
-  ('llm_model',          '"FILL IN: model alias in LiteLLM"', 'Model used for classification and drafting.'),
-  ('n8n_base_url',       '"FILL IN: http://bzb-ai-1:5678"', 'Base URL Casey opens review links on (tailnet, not public).'),
+  ('llm_model',          '"Qwen3.8-Flash-Next-GGUF-UD-Q3_K_XL"', 'Model used for classification and drafting.'),
+  ('n8n_base_url',       '"https://bzb-ai-1.tail9f1964.ts.net:8443/"', 'Base URL Casey opens review links on (tailnet, not public).'),
   ('llm_json_schema',    'true', 'Send response_format json_schema to LiteLLM. Set false if the backend rejects it; parsing still works.'),
   ('llm_drafting',       'true', 'Let the model word client emails. false = always use the fixed templates.'),
   ('require_internal_auth', 'true', 'Only act on employee emails that Exchange stamped AuthAs: Internal. See docs/05-rollout.md before changing.'),
@@ -62,8 +62,8 @@ INSERT INTO employees (
   min_notice_hours, search_window_days, offers_per_round,
   bcc_after_intro
 ) VALUES (
-  'vic@bluzonebio.com',                 -- FILL IN: Vic's exact UPN (lowercase)
-  'Vic Suarez', 'Vic',
+  'vic.suarez@bluzonebio.com',                 -- FILL IN: Vic's exact UPN (lowercase)
+  'Vic Suarez',
   'America/New_York',
   '{"mon":["09:00","17:00"],"tue":["09:00","17:00"],"wed":["09:00","17:00"],
     "thu":["09:00","17:00"],"fri":["09:00","16:00"],"sat":null,"sun":null}',   -- CONFIRM

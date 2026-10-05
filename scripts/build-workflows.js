@@ -200,7 +200,7 @@ if (r.statusCode === 410) {
   return { json: { ok: true, reset: true, cursor: null, ids: [], settings } };
 }
 if (r.error || r.statusCode < 200 || r.statusCode >= 300) {
-  throw new Error('Graph delta failed: ' + JSON.stringify(r.error || r.body).slice(0, 500));
+  throw new Error('Graph delta failed: ' + lib.poller.describeGraphFailure(r));
 }
 const s = lib.poller.splitDelta(r.body);
 return { json: { ok: true, cursor: s.cursor, ids: s.ids, more: s.more, settings } };`, { lib: 'poller' }),
@@ -217,7 +217,7 @@ return out;`, { perItem: false, lib: 'poller' }),
 const r = $json;
 if (r.error || r.statusCode !== 200) {
   if (r.statusCode === 404) return { json: { skip: true } };          // deleted between delta and fetch
-  throw new Error('Graph get message failed: ' + JSON.stringify(r.error || r.body).slice(0, 500));
+  throw new Error('Graph get message failed: ' + lib.poller.describeGraphFailure(r));
 }
 return { json: { msg: lib.poller.normalizeMessage(r.body) } };`, { lib: 'poller' }),
     pg(W, 'Ingest', [1980, 180],
