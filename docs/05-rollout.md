@@ -20,6 +20,16 @@ Set up the portal per `docs/09-portal.md`: the Entra app with assignment require
 
 You're now an enrolled test employee for Stage 2. No SQL or RBAC changes needed.
 
+## Try conversations without email (any time)
+
+`scripts/simulate.js` lets you play the client in a terminal. It uses Sarah's real decision code and your real model (via LiteLLM over Tailscale), keeps one thread in memory, and shows what she understood, the times she'd offer, and the exact email she'd send, including whether the model wrote it (`model` / `model_retry`) or the template was used. Nothing is emailed, booked or saved. From the repo on your Mac:
+
+```bash
+LITELLM_KEY=sk-... node scripts/simulate.js
+```
+
+Type the employee's request first ("Sarah will find us a time next week"), then reply as the client. `/me yes` answers the "Confirm" email as the employee, `/busy <ISO start> <ISO end>` blocks time on the fake calendar, `/new` starts over, and `/state` shows the thread. Defaults match BZB-AI-1 (model, `json_schema` off, thinking off); change them with `LLM_MODEL`, `LLM_JSON_SCHEMA`, `LLM_THINKING`, `EMPLOYEE_NAME` and `EMPLOYEE_TZ`. Use it to tune wording and edge cases fast; use real email only for the end-to-end checks below.
+
 ## Stage 1 · `dry_run`: decisions without actions
 
 Sarah reads mail and decides, but **nothing is sent and nothing touches Vic's calendar**. Outbox rows are written as `skipped`, so you can read exactly what she *would* have done.
