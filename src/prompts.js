@@ -200,8 +200,13 @@ function classifyEmployeeInThreadPrompt({ employeeFirst, body }) {
 
 const PURPOSE_GUIDE = {
   intro: (f) => `This is Sarah's first email on the thread. Briefly thank ${f.employee_first} for the introduction${f.bcc ? " and say you're moving them to BCC" : ''}. Introduce yourself as ${f.employee_first}'s scheduling assistant and ask which option works for a ${f.duration_min}-minute ${f.location}. Put {{SLOTS}} on its own line.`,
-  new_round: () => 'None of the earlier options worked (or the client gave a new window). Offer the new options. Put {{SLOTS}} on its own line.',
-  counter_unavailable: () => 'The time the client suggested is not available. Say so briefly and offer these options instead. Put {{SLOTS}} on its own line.',
+  new_round: (f) => (f.asked
+    ? 'The client asked about {{ASKED}}; these options fit that. Reply naturally (you can refer to it as {{ASKED}}) and offer them. Put {{SLOTS}} on its own line.'
+    : 'None of the earlier options worked. Acknowledge that naturally and offer the new options. Put {{SLOTS}} on its own line.'),
+  counter_unavailable: (f) => (f.asked
+    ? 'The client suggested {{ASKED}}, but that is not available. Say so kindly (refer to it as {{ASKED}}) and offer these instead. Put {{SLOTS}} on its own line.'
+    : 'The time the client suggested is not available. Say so briefly and offer these options instead. Put {{SLOTS}} on its own line.'),
+  window_unavailable: (f) => `The client asked about ${f.asked ? '{{ASKED}}' : 'a particular day'}, but ${f.employee_first} has nothing open then. Say so kindly${f.asked ? ' (refer to it as {{ASKED}})' : ''}, then offer these, the closest open times. Put {{SLOTS}} on its own line.`,
   taken: () => 'The option the client picked was just taken. Apologize briefly and offer new options. Put {{SLOTS}} on its own line.',
   employee_declined: (f) => `That time no longer works for ${f.employee_first}. Apologize briefly and offer new options. Put {{SLOTS}} on its own line.`,
   followup: () => 'The client has not replied to the earlier options. Write a short, friendly nudge and re-share the options. Put {{SLOTS}} on its own line.',
@@ -210,7 +215,7 @@ const PURPOSE_GUIDE = {
   handoff: (f) => `The client asked something only ${f.employee_first} can answer${f.question ? ` (${f.question})` : ''}. Say you'll pass it to ${f.employee_first}, who will follow up. Do not answer the question. No placeholders.`,
 };
 
-function draftPrompt(facts) {
+function draftPrompt(facts, { feedback = null, previous = null } = {}) {
   const examples = STYLE_EXAMPLES.filter((e) => e.purpose === facts.purpose)
     .map((e) => `Example (${e.purpose}):\n${JSON.stringify({ body: e.body.replace(/\{EMPLOYEE\}/g, facts.employee_first) })}`).join('\n\n');
   return {
@@ -222,7 +227,7 @@ function draftPrompt(facts) {
       'Avoid stock phrases ("I hope this email finds you well", "please do not hesitate", "kindly", "at your earliest convenience", "I wanted to reach out"), avoid exclamation marks, and never sound like a form letter.',
       'Plain text, 2–4 short sentences plus the options. Greet them by first name.',
       'HARD RULES — the email is rejected if you break any of them:',
-      '1. Never write a date, a day of the week, a month, a clock time, a timezone, or a relative date (today, tomorrow, next week). Code inserts every time: use {{SLOTS}} where the numbered options go and {{TIME}} where the agreed time goes, exactly as instructed.',
+      '1. Never write a date, a day of the week, a month, an ordinal like "8th", a clock time, a timezone, or a relative date (today, tomorrow, next week), not even to repeat what the client wrote. Code inserts every time: use {{SLOTS}} where the numbered options go and {{TIME}} where the agreed time goes, exactly as instructed. When the task mentions {{ASKED}}, write {{ASKED}} (at most once) to refer to the day or time the client asked about; code fills it in.',
       '2. No sign-off and no signature ("Best, Sarah" is added automatically).',
       '3. No links, email addresses, or phone numbers.',
       '4. Never claim to be a person. Do not promise anything that is not in the facts.',
@@ -234,7 +239,8 @@ function draftPrompt(facts) {
       employee_first_name: facts.employee_first,
       meeting: `${facts.duration_min}-minute ${facts.location}`,
       client_last_message: facts.client_last_message ? String(facts.client_last_message).slice(0, 1200) : null,
-    }, null, 2)}`,
+    }, null, 2)}${feedback ? `\n\nYour previous draft was rejected because it broke a hard rule: ${feedback}.\n`
+      + `Previous draft: ${JSON.stringify(previous || '')}\nWrite it again, keeping the tone, but with no day names, dates, ordinals or clock times of your own${facts.asked ? ' (write {{ASKED}} instead)' : ''}.` : ''}`,
     schema: 'draft',
   };
 }

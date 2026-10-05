@@ -343,6 +343,29 @@ test('paused employee: a new request is ignored and they are told; nothing reach
 });
 
 // -----------------------------------------------------------------------------
+test('a client email that breaks a rule is redrafted once by the model, not replaced by the template', async () => {
+  let drafts = 0;
+  S.llmOverride = (schema) => {
+    if (schema !== 'draft') return undefined;
+    drafts += 1;
+    return JSON.stringify(drafts === 1
+      ? { body: 'Hi Noah! How about Thursday the 8th? {{SLOTS}}' }                       // breaks the rules
+      : { body: 'Hi Noah, great to meet you. Would one of these work?\n\n{{SLOTS}}\n\nJust reply with the number.' });
+  };
+  const trig = mock.deliver({ from: VIC, to: ['noah@proseware.com'], cc: [SARAH], authAs: 'Internal', subject: 'Noah intro',
+                              body: 'Sarah will find us a time.' });
+  const intro = await waitFor('intro to Noah', () => sentTo('noah@proseware.com')[0]);
+  S.llmOverride = null;
+  assert.equal(drafts, 2, 'one draft, one redraft');
+  assert.match(bodyOf(intro), /great to meet you/);
+  assert.ok(!/Thursday the 8th/.test(bodyOf(intro)));
+  const o = await q1(`SELECT payload->>'draft_source' AS source, payload->'draft_errors' AS errors FROM sched.outbox
+                       WHERE kind = 'reply' AND thread_id = (SELECT id FROM sched.threads WHERE conversation_id = $1)`, [trig.conversationId]);
+  assert.equal(o.source, 'model_retry');
+  assert.ok(o.errors.some((e) => e.startsWith('weekday')));
+});
+
+// -----------------------------------------------------------------------------
 test('a failing workflow triggers the error workflow, which emails Casey', async () => {
   S.failNext['GET /mailFolders/inbox/messages/delta$'] = 500;
   const alert = await waitFor('failure alert to Casey', () =>

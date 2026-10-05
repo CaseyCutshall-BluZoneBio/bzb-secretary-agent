@@ -265,3 +265,13 @@ test('greeting: unknown client names are left out; none known → "there"', () =
   assert.equal(go({ client_addresses: ['cmcutshall5@gmail.com'], client_names: {} }), 'there');
   assert.equal(go({ client_addresses: ['dana@acme-bio.com', 'x9@y.com'], client_names: { 'dana@acme-bio.com': 'Dana Whitfield' } }), 'Dana');
 });
+
+test('validator: {{ASKED}} only where offered, at most once', () => {
+  const D = require('../../src/draft');
+  assert.ok(D.validateDraft('Sure, Dana. {{ASKED}} has openings:\n\n{{SLOTS}}', 'new_round', { optional: ['ASKED'] }).ok);
+  assert.ok(D.validateDraft('Sure, Dana, here are more options:\n\n{{SLOTS}}', 'new_round', { optional: ['ASKED'] }).ok, 'optional');
+  assert.match(D.validateDraft('{{ASKED}} has openings:\n\n{{SLOTS}}', 'new_round').errors.join(), /unexpected placeholder/, 'not offered');
+  assert.match(D.validateDraft('{{ASKED}} or {{ASKED}}:\n\n{{SLOTS}}', 'new_round', { optional: ['ASKED'] }).errors.join(), /at most once/);
+  assert.match(D.validateDraft('Great, {{TIME}} works. {{ASKED}}', 'ack', { optional: ['ASKED'] }).errors.join(), /unexpected placeholder/, 'not for ack');
+  assert.ok(D.validateDraft(D.TEMPLATES.window_unavailable({ names: 'Dana', employee_first: 'Vic' }), 'window_unavailable').ok);
+});

@@ -5,7 +5,7 @@ const D = require('../../src/decide');
 const { ctx, clientCtx, llm, graphEvent, thread, offers, message, NO_CONSTRAINTS } = require('./fixtures');
 
 // Run all four steps with canned model/calendar responses.
-function run(c, { classify, calendar = { value: [] }, draft } = {}) {
+function run(c, { classify, calendar = { value: [] }, draft, redraft } = {}) {
   let S = D.start(c);
   const classifyReq = S.llm;
   S = D.interpret(S, S.llm ? classify : null);
@@ -13,6 +13,7 @@ function run(c, { classify, calendar = { value: [] }, draft } = {}) {
   S = D.act(S, S.calendar ? calendar : null);
   const draftReq = S.llm;
   S = D.finish(S, S.llm ? draft : null);
+  if (S.llm) S = D.finish(S, redraft || null);   // the one redraft after a rejected draft
   return { S, plan: S.plan, classifyReq, calReq, draftReq };
 }
 
@@ -544,4 +545,66 @@ test('"I can\'t do any of those, does he have something the following week?" →
     classify: llm(CLIENT({ intent: 'counter', constraints: { ...NO_CONSTRAINTS, earliest_date: '2026-10-12', latest_date: '2026-10-16' } })),
   });
   assert.ok(w.plan.offers.insert.every((o) => o.start >= '2026-10-12' && o.start < '2026-10-17'));
+});
+
+test('"Anything on Thursday the 8th?" with constraints sent as a list → options on the 8th', () => {
+  // Exactly what the local model returned on BZB-AI-1 (json_schema off): a list, not an object.
+  const { plan } = run(clientCtx('Anything on Thursday the 8th?'), {
+    classify: llm(CLIENT({ intent: 'counter', constraints: [{ earliest_date: '2026-10-08', latest_date: '2026-10-08' }] })),
+  });
+  const reply = plan.outbox.find((o) => o.kind === 'reply');
+  assert.equal(reply.purpose, 'new_round');
+  assert.ok(plan.offers.insert.length >= 1);
+  assert.ok(plan.offers.insert.every((o) => o.start.startsWith('2026-10-08')), JSON.stringify(plan.offers.insert.map((o) => o.start)));
+});
+
+test('a rejected draft gets one redraft with the problem spelled out; {{ASKED}} is filled by code', () => {
+  const { plan, S } = run(clientCtx('Anything on Thursday the 8th?'), {
+    classify: llm(CLIENT({ intent: 'counter', constraints: { ...NO_CONSTRAINTS, earliest_date: '2026-10-08', latest_date: '2026-10-08' } })),
+    draft: llm({ body: 'Sure, Dana. Thursday the 8th works. Here are some times:\n\n{{SLOTS}}' }),
+    redraft: llm({ body: 'Sure thing, Dana. {{ASKED}} has a few openings:\n\n{{SLOTS}}\n\nWould one of these work?' }),
+  });
+  const reply = plan.outbox.find((o) => o.kind === 'reply');
+  assert.equal(reply.payload.draft_source, 'model_retry');
+  assert.match(reply.payload.body_text, /^Sure thing, Dana\. Thursday, October 8 has a few openings:/);
+  assert.ok(reply.payload.draft_errors.some((e) => e.startsWith('weekday')), 'the first attempt is recorded');
+  assert.ok(S.log.some((l) => l.includes('asking for a redraft')));
+});
+
+test('a redraft that still breaks a rule → the template, never the bad wording', () => {
+  const bad = llm({ body: 'Thursday the 8th is great! {{SLOTS}}' });
+  const { plan } = run(clientCtx('Anything on Thursday the 8th?'), {
+    classify: llm(CLIENT({ intent: 'counter', constraints: { ...NO_CONSTRAINTS, earliest_date: '2026-10-08', latest_date: '2026-10-08' } })),
+    draft: bad, redraft: bad,
+  });
+  const reply = plan.outbox.find((o) => o.kind === 'reply');
+  assert.equal(reply.payload.draft_source, 'template');
+  assert.ok(!/Thursday the 8th/.test(reply.payload.body_text));
+  assert.ok(reply.payload.draft_errors.some((e) => e.startsWith('retry: ')));
+});
+
+test('the day the client asked for is fully booked → the closest open times after it, saying so', () => {
+  const cal = { value: [graphEvent('2026-10-08T07:00:00-04:00', '2026-10-08T19:00:00-04:00')] };
+  const { plan } = run(clientCtx('Anything on Thursday the 8th?'), {
+    classify: llm(CLIENT({ intent: 'counter', constraints: { ...NO_CONSTRAINTS, earliest_date: '2026-10-08', latest_date: '2026-10-08' } })),
+    calendar: cal,
+    draft: llm({ body: 'Sorry, Dana, {{ASKED}} is already full, but these are close:\n\n{{SLOTS}}' }),
+  });
+  const reply = plan.outbox.find((o) => o.kind === 'reply');
+  assert.equal(reply.purpose, 'window_unavailable');
+  assert.deepEqual(plan.thread.transitions, [], 'not handed off');
+  assert.ok(plan.offers.insert.every((o) => o.start > '2026-10-09'));
+  assert.match(reply.payload.body_text, /^Sorry, Dana, Thursday, October 8 is already full/);
+});
+
+test('a counter-proposed time that is taken: {{ASKED}} names it', () => {
+  const cal = { value: [graphEvent('2026-10-14T07:00:00-04:00', '2026-10-14T19:00:00-04:00')] };
+  const { plan } = run(clientCtx('Can we do Wednesday the 14th at 8am?'), {
+    classify: llm(CLIENT({ intent: 'counter', proposed_times: [{ date: '2026-10-14', time: '08:00' }] })),
+    calendar: cal,
+    draft: llm({ body: 'Thanks, Dana. {{ASKED}} is taken, but these are open:\n\n{{SLOTS}}' }),
+  });
+  const reply = plan.outbox.find((o) => o.kind === 'reply');
+  assert.equal(reply.purpose, 'counter_unavailable');
+  assert.match(reply.payload.body_text, /^Thanks, Dana\. Wednesday, October 14 at 8:00 AM is taken/);
 });

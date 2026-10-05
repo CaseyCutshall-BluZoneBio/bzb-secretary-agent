@@ -9,14 +9,18 @@ const { formatSlotShort, locationPhrase } = require('./format');
 const { DateTime } = require('./luxon');
 
 const PLACEHOLDERS = {
-  intro: ['SLOTS'], new_round: ['SLOTS'], counter_unavailable: ['SLOTS'], taken: ['SLOTS'],
+  intro: ['SLOTS'], new_round: ['SLOTS'], counter_unavailable: ['SLOTS'], window_unavailable: ['SLOTS'], taken: ['SLOTS'],
   employee_declined: ['SLOTS'], followup: ['SLOTS'], ack: ['TIME'], confirmed: ['TIME'], handoff: [],
 };
+// Placeholders a draft MAY use (at most once), when code has the text for
+// them: {{ASKED}} is the day or time the client asked about, written by code.
+const OPTIONAL_PLACEHOLDERS = { new_round: ['ASKED'], counter_unavailable: ['ASKED'], window_unavailable: ['ASKED'] };
 
 const TEMPLATES = {
   intro: (f) => `${f.bcc ? `Thanks for the intro, ${f.employee_first}. I'll move you to BCC so your inbox stays quiet.` : `Thanks, ${f.employee_first}.`}\n\nHi ${f.names}, great to meet you. I help ${f.employee_first} with scheduling. Would one of these work for a ${f.duration_min}-minute ${f.location}?\n\n{{SLOTS}}\n\nJust reply with the number, or tell me what suits you and I'll work around it.`,
   new_round: (f) => `No problem, ${f.names}. Here are a few more options:\n\n{{SLOTS}}\n\nDo any of these work better?`,
   counter_unavailable: (f) => `Thanks for suggesting that, ${f.names}. Unfortunately ${f.employee_first} is already booked then, but these are open:\n\n{{SLOTS}}`,
+  window_unavailable: (f) => `Thanks, ${f.names}. Unfortunately ${f.employee_first} is booked up then, but these are the closest open times:\n\n{{SLOTS}}`,
   taken: (f) => `Sorry, ${f.names}, that slot was just taken. These are still open:\n\n{{SLOTS}}`,
   employee_declined: (f) => `Sorry, ${f.names}, that time won't work for ${f.employee_first} after all. Could one of these work instead?\n\n{{SLOTS}}`,
   followup: (f) => `Hi ${f.names}, circling back on finding a time with ${f.employee_first}. These are still open:\n\n{{SLOTS}}\n\nIf none of them fit, tell me what works and I'll find something.`,
@@ -60,16 +64,21 @@ function stripSignoff(text) {
 }
 
 /** Validate a model draft. Returns { ok, body, errors }. */
-function validateDraft(rawBody, purpose) {
+function validateDraft(rawBody, purpose, { optional = [] } = {}) {
   const errors = [];
   if (typeof rawBody !== 'string') return { ok: false, errors: ['body is not a string'] };
   const body = stripSignoff(rawBody.replace(/^subject:.*\n/i, ''));
   const needed = PLACEHOLDERS[purpose] || [];
+  const allowedOptional = optional.filter((o) => (OPTIONAL_PLACEHOLDERS[purpose] || []).includes(o));
 
   const found = body.match(/\{\{\s*[A-Z_]+\s*\}\}/g) || [];
   for (const p of found) {
     const name = p.replace(/[{}\s]/g, '');
-    if (!needed.includes(name)) errors.push(`unexpected placeholder ${p}`);
+    if (!needed.includes(name) && !allowedOptional.includes(name)) errors.push(`unexpected placeholder ${p}`);
+  }
+  for (const o of allowedOptional) {
+    const count = (body.match(new RegExp(`\\{\\{\\s*${o}\\s*\\}\\}`, 'g')) || []).length;
+    if (count > 1) errors.push(`{{${o}}} may appear at most once (found ${count})`);
   }
   for (const n of needed) {
     const count = (body.match(new RegExp(`\\{\\{\\s*${n}\\s*\\}\\}`, 'g')) || []).length;
@@ -94,10 +103,11 @@ function signature(ctx, employee) {
   return [setting(ctx, 'sarah_name', 'Sarah'), title, setting(ctx, 'company_name', '')].filter(Boolean).join('\n');
 }
 
-function fillPlaceholders(body, { slotsText, timeText }) {
+function fillPlaceholders(body, { slotsText, timeText, askedText }) {
   return body
     .replace(/\{\{\s*SLOTS\s*\}\}/g, slotsText || '')
-    .replace(/\{\{\s*TIME\s*\}\}/g, timeText || '');
+    .replace(/\{\{\s*TIME\s*\}\}/g, timeText || '')
+    .replace(/\{\{\s*ASKED\s*\}\}/g, askedText || 'then');
 }
 
 // Quoted original under the reply, Outlook-style.
@@ -280,7 +290,7 @@ function vicNotConnectedMail(ctx, employee, subject) {
 }
 
 module.exports = {
-  portalLink, vicPausedMail, vicNotConnectedMail,
+  portalLink, vicPausedMail, vicNotConnectedMail, OPTIONAL_PLACEHOLDERS,
   PLACEHOLDERS, TEMPLATES, FORBIDDEN, HEADS_UP, stripSignoff, validateDraft, fillPlaceholders, renderClientEmail,
   signature, quoteHtml, clientRecipients, checkRecipients, hasExternal, clientLabel,
   vicConfirmationMail, vicReminderMail, vicClarifyMail, vicNoticeMail, vicStalledMail, vicNoClientsMail,

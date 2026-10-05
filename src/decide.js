@@ -46,7 +46,21 @@ const threadOffers = (ctx) => ctx.thread_offers || [];
 const liveThreadOffers = (ctx) => threadOffers(ctx).filter((o) => o.status === 'offered' || o.status === 'accepted');
 
 function sanitizeConstraints(c, todayIso) {
-  c = c || {};
+  // Without json_schema, models sometimes return a list of windows instead of
+  // one object ([{"earliest_date": …}]): merge them into one.
+  if (Array.isArray(c)) {
+    const parts = c.filter((x) => x && typeof x === 'object');
+    const dates = (k) => parts.map((x) => x[k]).filter((d) => typeof d === 'string' && DATE_RE.test(d)).sort();
+    const e = dates('earliest_date');
+    const l = dates('latest_date');
+    c = {
+      earliest_date: e[0] || null,
+      latest_date: l.length ? l[l.length - 1] : null,
+      days_of_week: parts.flatMap((x) => (Array.isArray(x.days_of_week) ? x.days_of_week : [])),
+      time_of_day: (parts.find((x) => ['morning', 'afternoon'].includes(x.time_of_day)) || {}).time_of_day,
+    };
+  }
+  c = c && typeof c === 'object' ? c : {};
   const date = (d) => (typeof d === 'string' && DATE_RE.test(d) ? d : null);
   let earliest = date(c.earliest_date);
   let latest = date(c.latest_date);
@@ -630,7 +644,7 @@ function queueClientEmail(S, purpose, fill, extra = {}) {
 }
 
 // Offer a set of slots: offers, holds, and the email.
-function offerSlots(S, slots, round, purpose) {
+function offerSlots(S, slots, round, purpose, asked = null) {
   const emp = employeeOf(S);
   const t = threadView(S);
   // Option numbers are unique per thread (round 2 is 4–6, …), so "option 2"
@@ -647,7 +661,9 @@ function offerSlots(S, slots, round, purpose) {
       });
     }
   }
-  queueClientEmail(S, purpose, { slotsText: F.formatSlotList(offers, emp.timezone) });
+  queueClientEmail(S, purpose, { slotsText: F.formatSlotList(offers, emp.timezone), askedText: asked || undefined },
+                   { facts: { asked: !!asked } });
+  S.email.optional = asked ? (D.OPTIONAL_PLACEHOLDERS[purpose] || []) : [];
 }
 
 function doStart(S, a, busy) {
@@ -677,11 +693,21 @@ function doPropose(S, a, busy) {
   const windowStart = proposeWindowStart(S, a);
   // Retiring this thread's live offers frees their slots for the new round.
   const live = liveThreadOffers(ctx);
-  const r = SL.pickSlots(slotParams(S, busy, {
-    constraints, windowStart,
-    excludeStarts: threadOffers(ctx).map((o) => o.start),
-  }));
+  const excludeStarts = threadOffers(ctx).map((o) => o.start);
+  let r = SL.pickSlots(slotParams(S, busy, { constraints, windowStart, excludeStarts }));
   S.log.push(`slots: ${r.note} (${r.considered} candidates)`);
+  let windowFull = false;
+  if (!r.slots.length && hasConstraints(a.constraints) && r.note !== 'beyond_horizon') {
+    // Nothing open in the window the client asked for: offer the closest open
+    // times from its start, and say that window is booked.
+    const from = a.constraints.earliest_date;
+    r = SL.pickSlots(slotParams(S, busy, {
+      constraints: {}, excludeStarts,
+      windowStart: from ? DateTime.fromISO(from, { zone: employeeOf(S).timezone }).toISO() : null,
+    }));
+    S.log.push(`asked window full; closest after it: ${r.note} (${r.considered} candidates)`);
+    windowFull = r.slots.length > 0;
+  }
   if (!r.slots.length) {
     return doEscalate(S, { reason: noSlotsReason(S, r, () => 'I ran out of open times that fit'), handoff: true });
   }
@@ -701,9 +727,13 @@ function doPropose(S, a, busy) {
   if (a.reason === 'followup') S.plan.thread.set.followup_sent = true;
   touchIfClient(S);
 
-  const purpose = { new_round: 'new_round', followup: 'followup', taken: 'taken',
-                    employee_declined: 'employee_declined', counter_unavailable: 'counter_unavailable' }[a.reason] || 'new_round';
-  offerSlots(S, r.slots, t.round_count + 1, purpose);
+  let purpose = { new_round: 'new_round', followup: 'followup', taken: 'taken',
+                  employee_declined: 'employee_declined', counter_unavailable: 'counter_unavailable' }[a.reason] || 'new_round';
+  if (windowFull && purpose === 'new_round') purpose = 'window_unavailable';
+  // What the client asked for, in code-written words, for {{ASKED}}.
+  const asked = ['new_round', 'counter_unavailable', 'window_unavailable'].includes(purpose)
+    ? (a.askedText || (hasConstraints(a.constraints) ? F.askedWindowText(a.constraints) : null)) : null;
+  offerSlots(S, r.slots, t.round_count + 1, purpose, asked);
 }
 
 // Client (or counter-proposal) picked a slot that passed its re-check.
@@ -766,7 +796,9 @@ function doCounterTimes(S, a, busy) {
     if (check.ok) return acceptFlow(S, { start: s, end: e, score: check.score }, check.flags);
   }
   const c = counterFallbackConstraints(a);
-  return doPropose(S, { reason: 'counter_unavailable', constraints: c || undefined }, busy);
+  const first = a.times.map((x) => DateTime.fromISO(`${x.date}T${x.time}`, { zone: emp.timezone })).find((d) => d.isValid);
+  const askedText = first ? F.askedTimeText(first.toISO(), emp.timezone) : null;
+  return doPropose(S, { reason: 'counter_unavailable', constraints: c || undefined, askedText }, busy);
 }
 
 function doBook(S, a, busy) {
@@ -881,6 +913,9 @@ function doNoClients(S) {
 // ---------------------------------------------------------------------------
 // step 4: finish
 // ---------------------------------------------------------------------------
+// Called once after the draft, and once more after a redraft. A draft that
+// breaks a rule (e.g. it repeats the client's "Thursday the 8th") gets ONE
+// retry with the problem spelled out, before the fixed template is used.
 function finish(S, resp) {
   if (S.done) return S;
   if (S.email) {
@@ -891,12 +926,21 @@ function finish(S, resp) {
     if (S.llm) {
       const parsed = L.parseModelJson(resp, 'draft');
       if (parsed.ok) {
-        const v = D.validateDraft(parsed.value.body, e.purpose);
-        if (v.ok) { body = v.body; source = 'model'; } else errors = v.errors;
+        const v = D.validateDraft(parsed.value.body, e.purpose, { optional: e.optional || [] });
+        if (v.ok) { body = v.body; source = S.redrafted ? 'model_retry' : 'model'; } else errors = v.errors;
+        if (!v.ok && !S.redrafted) {
+          S.redrafted = true;
+          S.firstDraftErrors = errors;
+          S.log.push(`draft rejected (${e.purpose}), asking for a redraft: ${errors.join('; ')}`);
+          S.llm = L.buildRequest(S.ctx, P.draftPrompt(e.facts, { feedback: errors.join('; '), previous: parsed.value.body }),
+                                 { temperature: 0.4, maxTokens: 4096 });
+          return S;
+        }
       } else errors = [parsed.error];
     }
+    if (S.firstDraftErrors) errors = [...S.firstDraftErrors, ...errors.map((x) => `retry: ${x}`)];
     if (!body) body = D.TEMPLATES[e.purpose](e.facts);
-    if (errors.length) S.log.push(`draft rejected (${e.purpose}): ${errors.join('; ')}`);
+    if (errors.length && source === 'template') S.log.push(`draft rejected (${e.purpose}): ${errors.join('; ')}`);
 
     const recErrors = D.checkRecipients(S.ctx, e.recipients, e.allowed);
     if (recErrors.length) throw new Error(`recipient check failed: ${recErrors.join('; ')}`);

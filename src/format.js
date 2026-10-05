@@ -48,10 +48,29 @@ function calendarTable(nowIso, zone, days) {
   return rows.join('\n');
 }
 
+// What the client asked for, in words, for the {{ASKED}} placeholder. Code
+// writes every date the client reads; the model only places the placeholder.
+function askedWindowText(c) {
+  if (!c) return null;
+  const d = (iso) => DateTime.fromISO(String(iso)).toFormat('cccc, LLLL d');
+  if (c.earliest_date && c.latest_date) {
+    return c.earliest_date === c.latest_date ? d(c.earliest_date) : `${d(c.earliest_date)} to ${d(c.latest_date)}`;
+  }
+  if (c.latest_date) return `by ${d(c.latest_date)}`;
+  if (c.earliest_date) return `${d(c.earliest_date)} onward`;
+  return null;
+}
+
+// "Wednesday, October 14 at 8:00 AM"
+function askedTimeText(startIso, zone) {
+  const s = dt(startIso, zone);
+  return `${s.toFormat('cccc, LLLL d')} at ${s.toFormat('h:mm a')}`;
+}
+
 function locationPhrase(locationType, locationText) {
   if (locationType === 'in_person') return locationText ? `in person at ${locationText}` : 'in person';
   if (locationType === 'phone') return 'a phone call';
   return 'a Teams call';
 }
 
-module.exports = { dt, formatSlot, formatSlotList, formatSlotShort, calendarTable, offsetLabel, locationPhrase };
+module.exports = { dt, formatSlot, formatSlotList, formatSlotShort, calendarTable, offsetLabel, locationPhrase, askedWindowText, askedTimeText };

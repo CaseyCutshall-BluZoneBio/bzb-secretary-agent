@@ -281,9 +281,18 @@ return { json: lib.decide.act(S, httpResult($json)) };`),
     code(W, '4 · Finish', [2640, 300], `${HTTP_RESULT}
 const S = $('3 · Act').item.json;
 return { json: lib.decide.finish(S, httpResult($json)) };`),
-    ifNode(W, 'Plan?', [2860, 300], '$json.plan != null'),
-    pg(W, 'Apply plan', [3080, 300], `SELECT sched.apply_plan($1::jsonb) AS result;`, `[ JSON.stringify($json.plan) ]`),
-    execWf(W, 'Kick executor', [3300, 300], 'executor', { wait: false, each: false }),
+    // A draft that broke a rule gets one redraft (finish() asks for it by
+    // setting llm); otherwise straight on to the plan.
+    ifNode(W, 'Redraft?', [2860, 300], '$json.llm != null'),
+    http(W, 'LLM: redraft', [3080, 180], {
+      method: 'POST', url: '={{ $json.llm.url }}', body: 'JSON.stringify($json.llm.body)', cred: 'llm', timeout: 180000,
+    }),
+    code(W, '5 · Finish redraft', [3300, 180], `${HTTP_RESULT}
+const S = $('4 · Finish').item.json;
+return { json: lib.decide.finish(S, httpResult($json)) };`),
+    ifNode(W, 'Plan?', [3520, 300], '$json.plan != null'),
+    pg(W, 'Apply plan', [3740, 300], `SELECT sched.apply_plan($1::jsonb) AS result;`, `[ JSON.stringify($json.plan) ]`),
+    execWf(W, 'Kick executor', [3960, 300], 'executor', { wait: false, each: false }),
   ];
   const pairs = [
     ['Event in', 'Load context'], ['Load context', '1 · Route'], ['1 · Route', 'Classify?'],
@@ -294,7 +303,9 @@ return { json: lib.decide.finish(S, httpResult($json)) };`),
     ['Portal: calendar', '3 · Act'], ['Graph: calendar', '3 · Act'],
     ['3 · Act', 'Draft?'],
     ['Draft?', 'LLM: draft', 0], ['Draft?', '4 · Finish', 1], ['LLM: draft', '4 · Finish'],
-    ['4 · Finish', 'Plan?'], ['Plan?', 'Apply plan', 0], ['Apply plan', 'Kick executor'],
+    ['4 · Finish', 'Redraft?'], ['Redraft?', 'LLM: redraft', 0], ['Redraft?', 'Plan?', 1],
+    ['LLM: redraft', '5 · Finish redraft'], ['5 · Finish redraft', 'Plan?'],
+    ['Plan?', 'Apply plan', 0], ['Apply plan', 'Kick executor'],
   ];
   return workflow(W, 'Sarah · Processor', nodes, pairs,
     { description: 'One inbound email or timer event → route → classify (LLM) → calendar → decide → draft (LLM) → apply_plan.' });

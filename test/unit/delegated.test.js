@@ -7,13 +7,14 @@ const X = require('../../src/executor');
 const P = require('../../src/prompts');
 const { VIC, ctx, clientCtx, llm, message, NO_CONSTRAINTS } = require('./fixtures');
 
-function run(c, { classify, calendar = { value: [] }, draft } = {}) {
+function run(c, { classify, calendar = { value: [] }, draft, redraft } = {}) {
   let S = D.start(c);
   const classifyReq = S.llm;
   S = D.interpret(S, S.llm ? classify : null);
   const calReq = S.calendar;
   S = D.act(S, S.calendar ? calendar : null);
   S = D.finish(S, S.llm ? draft : null);
+  if (S.llm) S = D.finish(S, redraft || null);   // the one redraft after a rejected draft
   return { S, plan: S.plan, classifyReq, calReq };
 }
 

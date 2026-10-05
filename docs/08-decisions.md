@@ -74,3 +74,10 @@ Employees sign in from wherever they are, so the portal is internet-facing at `h
 - **The broker's port is never published.**
 
 Funnel hostnames appear in certificate-transparency logs, so the portal assumes it will be found. Moving to a branded domain later is a config change (`docs/09-portal.md` §4).
+
+### D20 · 2026-10-05 · More model, same guardrails: {{ASKED}} and one redraft
+In shadow testing on the local Qwen model, many client emails fell back to the fixed templates, because the model naturally repeated the client's own words ("Thursday the 8th is full…"), which D6 forbids. Two changes let the model do more of the writing without letting it state a fact:
+- **`{{ASKED}}`:** a placeholder for the day or time the client asked about. Code fills it in ("Thursday, October 8"), so the model can say "{{ASKED}} is booked up, but…".
+- **One redraft:** a draft that breaks a rule goes back to the model once, with the exact problem quoted. Only a second failure falls back to the template. `draft_source` records `model`, `model_retry` or `template`.
+
+At the same time, the voice guidance became more conversational: respond to what the client said, match their tone, no stock phrases. When the client's window is fully booked, Sarah now offers the closest times after it (`window_unavailable`) instead of handing off. The disclosure (D13) is unchanged.

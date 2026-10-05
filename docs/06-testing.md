@@ -2,7 +2,7 @@
 
 Three layers. All of them passed on 2026-09-30 against n8n 2.41.4, Node 24, and Postgres 14 (earlier runs: Postgres 16).
 
-## Unit tests: `npm test` (95 + 39 tests, ~2 s)
+## Unit tests: `npm test` (101 + 39 tests, ~2 s)
 
 Plain Node (≥ 20). No n8n, database, or network. `npm test` runs `test/unit/` and then the portal's own suite (`portal/test/`, an npm workspace).
 
@@ -41,7 +41,7 @@ This creates `sched_agent_test` (and the `sched_portal` role if missing), applie
 
 You can run the test file against the production database too. It never commits.
 
-## End-to-end: `npm run test:e2e` (12 scenarios, ~5 min)
+## End-to-end: `npm run test:e2e` (13 scenarios, ~5 min)
 
 This runs **the real generated workflows in a real n8n** against:
 
@@ -73,6 +73,7 @@ Set `E2E_DUMP=/tmp/sent.txt` to get a readable copy of every email Sarah sent.
 | delegated employee | A self-service employee's reads, 3 holds, booking and hold releases all go through the broker with **their** token (never the app credential); the invite is on their calendar; mail stays app-only; the signature names them |
 | dead token | Revoked mid-thread: one reconnect email, `NEEDS_VIC` with the specific reason, nothing to the client; a new request is refused with a notice and no broker call; after reconnecting, the stuck holds are released |
 | paused employee | A new request is ignored with a "Paused" notice; nothing reaches the client |
+| redraft | A model draft that breaks a rule (it wrote a day name) is redrafted once through the Processor's **LLM: redraft** node; the client gets the model's second wording, not the template |
 | error workflow | A failing Poller run emails Casey via Sarah's mailbox; the next run recovers |
 | clean finish | Every inbound email reached a final disposition; no failed outbox items |
 
