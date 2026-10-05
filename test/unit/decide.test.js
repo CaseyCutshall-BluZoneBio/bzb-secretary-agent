@@ -705,3 +705,56 @@ test('logistics questions are answered from the thread\'s facts, not handed off'
   const other = run(clientCtx('Who else is joining?'), { classify: llm(CLIENT({ intent: 'logistics', logistics_topic: null })) }).plan;
   assert.deepEqual(other.thread.transitions, ['NEEDS_VIC']);
 });
+
+// A booked thread: option 2 (Wed Oct 7, 10:00 EDT) is booked as event EV-BOOKED.
+function bookedCtx(body, cls) {
+  const offs = offers().map((o, i) => ({ ...o, status: i === 1 ? 'booked' : 'superseded', hold_event_id: null }));
+  return clientCtx(body, { thread: { state: 'BOOKED', booked_event_id: 'EV-BOOKED', round_count: 4, accepted_offer_id: 12 }, offers: offs });
+}
+
+test('reschedule: "can we push it to next week?" after booking → new times, not a hand-off', () => {
+  const { plan } = run(bookedCtx('Something came up, can we push it to next week?'), {
+    classify: llm(CLIENT({ intent: 'reschedule', constraints: { ...NO_CONSTRAINTS, earliest_date: '2026-10-12', latest_date: '2026-10-16' } })),
+  });
+  assert.deepEqual(plan.thread.transitions, ['PROPOSED']);
+  assert.equal(plan.thread.set.round_count, 1, 'a fresh count of rounds (it had used 4)');
+  const reply = plan.outbox.find((o) => o.kind === 'reply');
+  assert.equal(reply.purpose, 'reschedule_round');
+  assert.match(reply.payload.body_text, /happy to move it/);
+  assert.equal(plan.offers.insert.length, 3);
+  assert.ok(plan.offers.insert.every((o) => o.start >= '2026-10-12' && o.start < '2026-10-17'));
+  assert.ok(!plan.outbox.some((o) => o.purpose === 'vic_notice'));
+  // cancelling still goes to the employee
+  const cancel = run(bookedCtx('We need to cancel, sorry.'), { classify: llm(CLIENT({ intent: 'cancel' })) }).plan;
+  assert.deepEqual(cancel.thread.transitions, ['NEEDS_VIC']);
+});
+
+test('reschedule: the meeting being moved does not block its own slot', () => {
+  // The booked event sits on the calendar; a client asking for that same day should still get times there.
+  const cal = { value: [graphEvent('2026-10-07T10:00:00-04:00', '2026-10-07T10:30:00-04:00', { id: 'EV-BOOKED' })] };
+  const { plan } = run(bookedCtx('Could we do Wednesday at 10:15 instead?'), {
+    classify: llm(CLIENT({ intent: 'reschedule', proposed_times: [{ date: '2026-10-07', time: '10:15' }] })), calendar: cal,
+  });
+  assert.deepEqual(plan.thread.transitions, ['CLIENT_ACCEPTED', 'AWAITING_VIC'], 'accepted straight from BOOKED');
+  const vic = plan.outbox.find((o) => o.purpose === 'vic_confirmation');
+  assert.match(vic.payload.body_text, /asked to move your meeting \(now Wednesday, October 7, 10:00–10:30 AM EDT/);
+  assert.match(vic.payload.body_text, /Reply YES and I'll move the meeting/);
+});
+
+test('reschedule: the employee\'s YES moves the existing event (PATCH), and the client hears "moved"', () => {
+  const offs = [...offers().map((o, i) => ({ ...o, status: i === 1 ? 'booked' : 'superseded', hold_event_id: null })),
+    { id: 20, thread_id: 7, employee_id: 1, round: 1, option_no: 4, start: '2026-10-14T18:00:00+00:00', end: '2026-10-14T18:30:00+00:00', status: 'accepted', flags: [], hold_event_id: 'H20' }];
+  const vicMsg = message({ id: 130, from_address: 'vic@bluzonebio.com', to_addresses: ['sarah.johnson@bluzonebio.com'], cc_addresses: [], body_text: 'yes', headers: { auth_as: 'Internal' } });
+  const c = ctx({ message: vicMsg, match_kind: 'confirmation', thread: thread({ state: 'AWAITING_VIC', booked_event_id: 'EV-BOOKED', accepted_offer_id: 20 }),
+                  thread_offers: offs, live_offers: offs.filter((o) => o.status === 'accepted'), reply_target: clientCtx('x').message });
+  const { plan } = run(c, { classify: llm({ decision: 'yes', proposed_times: [], constraints: NO_CONSTRAINTS }) });
+  const booking = plan.outbox.find((o) => o.kind === 'create_booking');
+  assert.equal(booking.payload.move_event_id, 'EV-BOOKED');
+  assert.equal(booking.purpose, 'reschedule');
+  assert.match(booking.payload.when_text, /moved from Wednesday, October 7/);
+  assert.equal(booking.needs_approval, true);
+  const reply = plan.outbox.find((o) => o.kind === 'reply');
+  assert.equal(reply.purpose, 'rescheduled');
+  assert.match(reply.payload.body_text, /moved it to Wednesday, October 14/);
+  assert.equal(reply.depends_on_ref, 'booking');
+});

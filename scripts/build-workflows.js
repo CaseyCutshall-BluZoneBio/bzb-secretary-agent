@@ -333,8 +333,9 @@ return { json: { item, req: lib.executor.firstRequest(item) } };`, { lib: 'execu
     // Two nodes on purpose: n8n ignores an expression in "Send Body", so a
     // single dynamic node would POST with an empty body.
     ifNode(W, 'With body?', [1100, 180], '$json.req.body != null'),
-    http(W, 'Graph: POST with body', [1320, 60], {
-      method: 'POST', url: '={{ $json.req.url }}', body: 'JSON.stringify($json.req.body)', cred: 'graph',
+    // POST (create) or PATCH (move a booked event when rescheduling).
+    http(W, 'Graph: call with body', [1320, 60], {
+      method: '={{ $json.req.method }}', url: '={{ $json.req.url }}', body: 'JSON.stringify($json.req.body)', cred: 'graph',
     }),
     http(W, 'Graph: call without body', [1320, 240], {
       method: '={{ $json.req.method }}', url: '={{ $json.req.url }}', cred: 'graph',
@@ -354,8 +355,8 @@ return { json: { report: lib.executor.afterSecond(a.item, a, $json) } };`, { lib
     ['Every minute', 'Claim'], ['Kicked', 'Claim'], ['Claim', 'Build request'], ['Build request', 'Call Graph?'],
     ['Call Graph?', 'Via broker?', 0], ['Call Graph?', 'After call', 1],
     ['Via broker?', 'Portal: calendar call', 0], ['Via broker?', 'With body?', 1], ['Portal: calendar call', 'After call'],
-    ['With body?', 'Graph: POST with body', 0], ['With body?', 'Graph: call without body', 1],
-    ['Graph: POST with body', 'After call'], ['Graph: call without body', 'After call'],
+    ['With body?', 'Graph: call with body', 0], ['With body?', 'Graph: call without body', 1],
+    ['Graph: call with body', 'After call'], ['Graph: call without body', 'After call'],
     ['After call', 'Send draft?'], ['Send draft?', 'Graph: send', 0], ['Send draft?', 'Report', 1],
     ['Graph: send', 'After send'], ['After send', 'Report'],
   ];

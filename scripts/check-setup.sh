@@ -77,8 +77,8 @@ if [ -z "$(sql 'SELECT 1')" ]; then
   bad "connect to sched_agent" "is the db container running? (cd $BZB_DIR && docker compose ps db)"
 else
   ok "database reachable"
-  n=$(sql "SELECT count(*) FROM sched.schema_migrations WHERE version IN ('001_schema','002_functions','003_seed','004_portal')")
-  [ "$n" = "4" ] && ok "all 4 migrations applied" || bad "migrations ($n of 4)" "apply db/0*.sql in order (docs/03-database.md)"
+  n=$(sql "SELECT count(*) FROM sched.schema_migrations WHERE version IN ('001_schema','002_functions','003_seed','004_portal','005_reschedule')")
+  [ "$n" = "5" ] && ok "all 5 migrations applied" || bad "migrations ($n of 5)" "apply the missing db/0*.sql files in order (docs/03-database.md, 'Upgrading an existing install')"
   left=$(sql "SELECT string_agg(key, ', ') FROM sched.settings WHERE value::text ILIKE '%FILL IN%'")
   [ -z "$left" ] && ok "no FILL IN left in settings" || bad "settings still FILL IN: $left" "UPDATE sched.settings … (docs/03-database.md)"
   echo "        mode = $(sql "SELECT sched.setting_text('mode')")"

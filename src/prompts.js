@@ -148,7 +148,7 @@ function classifyClientPrompt({ employeeFirst, zone, table, optionsText, from, s
     system: [
       `Sarah is the AI scheduling assistant for ${employeeFirst}. She is arranging a meeting with the sender.`,
       state === 'BOOKED'
-        ? 'The meeting is already booked. Classify the latest reply.'
+        ? 'The meeting is already booked. Classify the latest reply. If they want to move it, intent is "reschedule", with proposed_times / constraints for when they would prefer.'
         : `The options currently on the table (all ${zone}):\n${optionsText || '(none)'}`,
       'Classify the sender\'s latest reply. Intents:',
       '- accept: they clearly pick one of the numbered options (by number, day, or time). Set accepted_option to that number.',
@@ -219,6 +219,8 @@ const PURPOSE_GUIDE = {
   followup: () => 'The client has not replied to the earlier options. Write a short, friendly nudge and re-share the options. Put {{SLOTS}} on its own line.',
   ack: (f) => `The client picked {{TIME}}. Thank them and say you'll confirm with ${f.employee_first} and send the calendar invite shortly. Use {{TIME}} exactly once.`,
   confirmed: (f) => `The meeting is booked for {{TIME}}. Say the calendar invite is coming from ${f.employee_first}'s calendar${f.location_type === 'teams' ? ' with the Teams link' : ''}. Use {{TIME}} exactly once.`,
+  reschedule_round: (f) => `The client asked to move the meeting that was already booked. Say kindly that's no problem${f.asked ? ' (you can refer to the day they asked about as {{ASKED}})' : ''}, and offer these other times. Put {{SLOTS}} on its own line.`,
+  rescheduled: (f) => `The meeting has been moved to {{TIME}}. Confirm that briefly and say an updated invite is coming from ${f.employee_first}'s calendar. Use {{TIME}} exactly once.`,
   logistics: (f) => {
     const q = { duration: `how long the meeting is (it is ${f.duration_min} minutes)`, format: `what kind of meeting it is (${f.location})`,
                 location: `where it is (${f.location}${f.location_type === 'teams' ? '; the Teams link comes with the calendar invite' : ''})`,

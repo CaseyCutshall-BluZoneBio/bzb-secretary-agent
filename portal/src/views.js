@@ -198,7 +198,7 @@ function helpPage({ emp, csrf, admin, mode, sarahUpn }) {
   <h2>Pausing</h2>
   <p>Pause Sarah on the <a href="/">home page</a> when you're away. While paused she ignores new requests from you and tells you so; threads already running continue.</p>
   <h2>She can't</h2>
-  <ul><li>Reschedule or cancel a booked meeting.</li><li>Offer times in a client's timezone (she always writes yours, with the UTC offset).</li><li>Read your email or send from your address.</li></ul>
+  <ul><li>Cancel a booked meeting (that comes to you; moving one, she handles).</li><li>Offer times in a client's timezone (she always writes yours, with the UTC offset).</li><li>Read your email or send from your address.</li></ul>
 </section>` });
 }
 

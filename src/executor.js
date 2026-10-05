@@ -32,9 +32,9 @@ function viaBroker(item, req) {
   if (!CALENDAR_KINDS.has(item.kind) || item.calendar_auth !== 'delegated') return req;
   const url = `${String(item.config.portal_internal_url || '').replace(/\/+$/, '')}/internal/v1/calendar`;
   const who = { employee_upn: item.payload.employee_upn };
-  const body = req.method === 'DELETE'
-    ? { ...who, op: 'delete_event', event_id: item.payload.event_id }
-    : { ...who, op: 'create_event', event: req.body };
+  const body = req.method === 'DELETE' ? { ...who, op: 'delete_event', event_id: item.payload.event_id }
+    : req.method === 'PATCH' ? { ...who, op: 'update_event', event_id: item.payload.move_event_id, event: req.body }
+      : { ...who, op: 'create_event', event: req.body };
   return { method: 'POST', url, body, broker: true };
 }
 
@@ -91,6 +91,10 @@ function graphRequest(item) {
     case 'delete_hold':
       return { method: 'DELETE', url: `${calendarOwner(item)}/events/${enc(p.event_id)}`, body: null };
     case 'create_booking': {
+      // Rescheduling: move the existing event; Exchange sends attendees an update.
+      if (p.move_event_id) {
+        return { method: 'PATCH', url: `${calendarOwner(item)}/events/${enc(p.move_event_id)}`, body: { start: p.start, end: p.end } };
+      }
       const body = {
         subject: p.subject,
         body: { contentType: 'HTML', content: p.body_html || '' },

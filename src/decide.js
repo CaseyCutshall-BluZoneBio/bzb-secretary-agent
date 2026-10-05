@@ -453,6 +453,19 @@ function decideClient(S, parsed) {
 
   if (t.state === 'BOOKED') {
     if (intent === 'thanks' || intent === 'accept') return ack;
+    // "Can we move it?": a reschedule round. The existing event is moved (not
+    // re-created) once the employee confirms the new time. Cancelling still
+    // goes to the employee.
+    if (['reschedule', 'counter', 'reject_all'].includes(intent)) {
+      if (cls.other_timezone && !sameZone(cls.other_timezone, emp.timezone)) {
+        return { type: 'escalate', reason: `The client wants to move the meeting to a time in ${cls.other_timezone}; I only schedule in ${emp.timezone}`, handoff: true };
+      }
+      const today0 = DateTime.fromISO(ctx.now, { setZone: true }).setZone(emp.timezone).toISODate();
+      const rtimes = sanitizeTimes(cls.proposed_times);
+      const rcons = sanitizeConstraints(cls.constraints, today0);
+      if (rtimes.length) return { type: 'counter_times', times: rtimes, constraints: rcons };
+      return { type: 'propose', reason: 'reschedule', constraints: rcons };
+    }
     return { type: 'escalate', reason: why('Client wrote after the meeting was booked'), handoff: true, question: cls.question };
   }
   if (t.state === 'AWAITING_VIC' || t.state === 'CLIENT_ACCEPTED') {
@@ -557,7 +570,9 @@ function act(S, calResp) {
       S.log.push(`calendar read failed: ${JSON.stringify((calResp && calResp.error) || calResp).slice(0, 300)}`);
       S.action = { type: 'escalate', reason: "I couldn't read your calendar (Microsoft Graph error)", handoff: false, origin: S.action };
     } else {
-      busy = SL.busyFromEvents(calResp.value);
+      // While rescheduling, the meeting being moved doesn't block anything.
+      const moving = S.ctx.thread && S.ctx.thread.booked_event_id;
+      busy = SL.busyFromEvents(calResp.value).filter((b) => !moving || b.id !== moving);
       if (calResp['@odata.nextLink']) {
         // More events than one page: deciding on a partial calendar could double-book.
         S.action = { type: 'escalate', reason: 'Your calendar had more events than I can read in one request', handoff: false, origin: S.action };
@@ -717,8 +732,10 @@ function doPropose(S, a, busy) {
   const ctx = S.ctx;
   const t = ctx.thread;
   const maxRounds = U.setting(ctx, 'max_rounds', 4);
-  if (t.round_count >= maxRounds && a.reason !== 'followup') {
-    return doEscalate(S, { reason: `No agreement after ${t.round_count} rounds of times`, handoff: true });
+  // A reschedule (from BOOKED) starts a fresh count of rounds.
+  const rounds = t.state === 'BOOKED' ? 0 : t.round_count;
+  if (rounds >= maxRounds && a.reason !== 'followup') {
+    return doEscalate(S, { reason: `No agreement after ${rounds} rounds of times`, handoff: true });
   }
 
   const constraints = proposeConstraints(S, a);
@@ -755,17 +772,17 @@ function doPropose(S, a, busy) {
   }
 
   if (t.state !== 'PROPOSED') S.plan.thread.transitions.push('PROPOSED');
-  Object.assign(S.plan.thread.set, { round_count: t.round_count + 1, constraints });
+  Object.assign(S.plan.thread.set, { round_count: rounds + 1, constraints });
   if (a.reason === 'followup') S.plan.thread.set.followup_sent = true;
   touchIfClient(S);
 
-  let purpose = { new_round: 'new_round', followup: 'followup', taken: 'taken',
+  let purpose = { new_round: 'new_round', followup: 'followup', taken: 'taken', reschedule: 'reschedule_round',
                   employee_declined: 'employee_declined', counter_unavailable: 'counter_unavailable' }[a.reason] || 'new_round';
   if (windowFull && purpose === 'new_round') purpose = 'window_unavailable';
   // What the client asked for, in code-written words, for {{ASKED}}.
   const asked = ['new_round', 'counter_unavailable', 'window_unavailable'].includes(purpose)
     ? (a.askedText || (hasConstraints(a.constraints) ? F.askedWindowText(a.constraints) : null)) : null;
-  offerSlots(S, r.slots, t.round_count + 1, purpose, asked);
+  offerSlots(S, r.slots, rounds + 1, purpose, asked);
 }
 
 // Client (or counter-proposal) picked a slot that passed its re-check.
@@ -795,7 +812,9 @@ function acceptFlow(S, slot, flags) {
   touchIfClient(S);
 
   const when = F.formatSlot(slot.start, slot.end, emp.timezone);
-  outboxInternal(S, 'vic_confirmation', D.vicConfirmationMail(ctx, emp, threadView(S), slot, when, flags, tidToken(S)));
+  const was = movingFrom(S);
+  outboxInternal(S, 'vic_confirmation', D.vicConfirmationMail(ctx, emp, threadView(S), slot, when, flags, tidToken(S),
+    was ? F.formatSlot(was.start, was.end, emp.timezone) : null));
   queueClientEmail(S, 'ack', { timeText: F.formatSpoken(slot.start, emp.timezone) });
 }
 
@@ -852,14 +871,18 @@ function doBook(S, a, busy) {
                      ...(view.other_internal || []).map((x) => ({ address: x, name: '' }))];
   const local = (iso) => DateTime.fromISO(iso, { setZone: true }).setZone(emp.timezone).toFormat("yyyy-MM-dd'T'HH:mm:ss");
   const title = `${D.clientLabel(view)} / ${emp.display_name}${view.topic ? `: ${view.topic}` : ''}`;
+  // Rescheduling: move the existing event (Exchange sends the attendees an
+  // updated invite) rather than creating a second one.
+  const was = movingFrom(S);
   S.plan.outbox.push({
-    ref: 'booking', kind: 'create_booking', purpose: 'booking', offer_id: offer.id, needs_approval: true,
+    ref: 'booking', kind: 'create_booking', purpose: t.booked_event_id ? 'reschedule' : 'booking', offer_id: offer.id, needs_approval: true,
     payload: {
       employee_upn: U.lower(emp.upn),
+      ...(t.booked_event_id ? { move_event_id: t.booked_event_id } : {}),
       subject: title,
       start: { dateTime: local(offer.start), timeZone: emp.timezone },
       end: { dateTime: local(offer.end), timeZone: emp.timezone },
-      when_text: when,
+      when_text: was ? `${when} (moved from ${F.formatSlot(was.start, was.end, emp.timezone)})` : when,
       attendees,
       location_type: view.location_type,
       location_text: view.location_text,
@@ -870,7 +893,14 @@ function doBook(S, a, busy) {
     S.plan.outbox.push({ kind: 'delete_hold', purpose: 'hold', offer_id: offer.id, depends_on_ref: 'booking',
                          payload: { employee_upn: U.lower(emp.upn) } });
   }
-  queueClientEmail(S, 'confirmed', { timeText: when }, { depends_on_ref: 'booking' });
+  queueClientEmail(S, t.booked_event_id ? 'rescheduled' : 'confirmed', { timeText: when }, { depends_on_ref: 'booking' });
+}
+
+// The offer the meeting is booked at now, while it's being moved.
+function movingFrom(S) {
+  const t = S.ctx.thread;
+  if (!t || !t.booked_event_id) return null;
+  return threadOffers(S.ctx).find((o) => o.status === 'booked') || null;
 }
 
 function doEscalate(S, a) {
@@ -922,7 +952,7 @@ function doStall(S) {
   const emp = employeeOf(S);
   S.plan.thread.transitions.push('STALLED');
   releaseOffers(S, liveThreadOffers(S.ctx), 'expired');
-  outboxInternal(S, 'vic_notice', D.vicStalledMail(S.ctx, emp, S.ctx.thread, tidToken(S)));
+  outboxInternal(S, 'vic_notice', D.vicStalledMail(S.ctx, emp, S.ctx.thread, tidToken(S), !!S.ctx.thread.booked_event_id));
 }
 
 function acceptedOffer(S) {

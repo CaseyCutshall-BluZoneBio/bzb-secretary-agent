@@ -183,6 +183,14 @@ function createMock({ sarah = 'sarah.johnson@bluzonebio.com', appCalendars = ['v
       S.events[id] = ev;
       return json(res, 201, ev);
     }
+    // move event (reschedule)
+    if (req.method === 'PATCH' && seg[2] === 'events' && seg.length === 4) {
+      const ev = S.events[seg[3]];
+      if (!ev) return json(res, 404, { error: { code: 'ErrorItemNotFound', message: 'gone' } });
+      Object.assign(ev, body);
+      S.patches = (S.patches || 0) + 1;
+      return json(res, 200, ev);
+    }
     // delete event
     if (req.method === 'DELETE' && seg[2] === 'events') {
       if (!S.events[seg[3]]) return json(res, 404, { error: { code: 'ErrorItemNotFound', message: 'gone' } });
@@ -211,6 +219,7 @@ function createMock({ sarah = 'sarah.johnson@bluzonebio.com', appCalendars = ['v
     if (body.op === 'calendar_view') path = `${base}/calendarView?startDateTime=${encodeURIComponent(body.start)}&endDateTime=${encodeURIComponent(body.end)}`;
     else if (body.op === 'create_event') { method = 'POST'; path = `${base}/events`; payload = body.event; }
     else if (body.op === 'delete_event') { method = 'DELETE'; path = `${base}/events/${encodeURIComponent(body.event_id)}`; }
+    else if (body.op === 'update_event') { method = 'PATCH'; path = `${base}/events/${encodeURIComponent(body.event_id)}`; payload = body.event; }
     else return json(res, 400, { error: { code: 'BadRequest', message: 'op' } });
     const r = await fetch(`http://127.0.0.1:${S.port}/graph/v1.0${path}`, {
       method, headers: { Authorization: `Bearer user:${upn}`, 'Content-Type': 'application/json' },

@@ -55,6 +55,8 @@ docker compose exec -T db psql -U sched_agent -d sched_agent -c "SELECT version 
 docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/004_portal.sql
 ```
 
+`005_reschedule.sql` (rescheduling) is also idempotent: `docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/005_reschedule.sql`.
+
 `004_portal.sql` is idempotent (safe to run twice). It leaves existing rows working exactly as before: Vic keeps `calendar_auth = 'app'`. It also revokes `PUBLIC`'s default `EXECUTE` on every `sched` function. n8n connects as the owner, `sched_agent`, so it's unaffected; the portal role can only run `portal_*`.
 
 `btree_gist` is a trusted extension, so the database owner can create it without superuser. It powers the "no two live offers overlap" constraint.

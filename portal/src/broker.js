@@ -9,6 +9,7 @@
 //     {"employee_upn","op":"calendar_view","start","end"}
 //     {"employee_upn","op":"create_event","event":{…}}
 //     {"employee_upn","op":"delete_event","event_id"}
+//     {"employee_upn","op":"update_event","event_id","event":{start,end}}  (reschedule)
 //   GET  /internal/v1/health
 //
 //   Graph's status + body       the call went through (on a Graph 401 the
@@ -68,8 +69,17 @@ function graphCallFor(b) {
     case 'delete_event':
       if (typeof b.event_id !== 'string' || !b.event_id || b.event_id.length > 512) return { error: 'event_id is required' };
       return { method: 'DELETE', path: `/me/events/${encodeURIComponent(b.event_id)}` };
+    case 'update_event': {
+      // Rescheduling only: move an existing event. Nothing but start/end may change.
+      if (typeof b.event_id !== 'string' || !b.event_id || b.event_id.length > 512) return { error: 'event_id is required' };
+      const ev = b.event;
+      if (!ev || typeof ev !== 'object' || !ev.start || !ev.end || Object.keys(ev).some((k) => !['start', 'end'].includes(k))) {
+        return { error: 'update_event may only change start and end' };
+      }
+      return { method: 'PATCH', path: `/me/events/${encodeURIComponent(b.event_id)}`, body: { start: ev.start, end: ev.end } };
+    }
     default:
-      return { error: 'op must be calendar_view, create_event or delete_event' };
+      return { error: 'op must be calendar_view, create_event, delete_event or update_event' };
   }
 }
 

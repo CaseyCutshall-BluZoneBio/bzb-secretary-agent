@@ -180,3 +180,15 @@ test('executor: broker answers → report', () => {
   assert.equal(X.afterFirst(del, { statusCode: 422, body: { error: { code: 'EmployeeNotDelegated' } } }).report.outcome, 'failed');
   assert.equal(X.afterFirst(del, { statusCode: 404, body: { error: { code: 'ErrorItemNotFound' } } }).report.result.already_gone, true);
 });
+
+test('executor: a reschedule PATCHes the existing event (direct, or update_event through the broker)', () => {
+  const when = { start: { dateTime: '2026-10-14T14:00:00', timeZone: 'America/New_York' }, end: { dateTime: '2026-10-14T14:30:00', timeZone: 'America/New_York' } };
+  const it = hold({ kind: 'create_booking', calendar_auth: 'app', payload: { employee_upn: 'brad@bluzonebio.com', move_event_id: 'EV/1', subject: 'S', attendees: [], ...when } });
+  const r = X.firstRequest(it);
+  assert.equal(r.method, 'PATCH');
+  assert.equal(r.url, 'https://graph.test/v1.0/users/brad%40bluzonebio.com/events/EV%2F1');
+  assert.deepEqual(r.body, when, 'only the time changes');
+  const b = X.firstRequest({ ...it, calendar_auth: 'delegated' });
+  assert.deepEqual(b.body, { employee_upn: 'brad@bluzonebio.com', op: 'update_event', event_id: 'EV/1', event: when });
+  assert.equal(X.afterFirst(it, { statusCode: 200, body: { id: 'EV/1' } }).report.result.event_id, 'EV/1');
+});

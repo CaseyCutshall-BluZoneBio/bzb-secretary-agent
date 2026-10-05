@@ -11,10 +11,11 @@ const { DateTime } = require('./luxon');
 const PLACEHOLDERS = {
   intro: ['SLOTS'], new_round: ['SLOTS'], counter_unavailable: ['SLOTS'], window_unavailable: ['SLOTS'], taken: ['SLOTS'],
   employee_declined: ['SLOTS'], followup: ['SLOTS'], ack: ['TIME'], confirmed: ['TIME'], handoff: [], ai_disclosure: [], logistics: [],
+  reschedule_round: ['SLOTS'], rescheduled: ['TIME'],
 };
 // Placeholders a draft MAY use (at most once), when code has the text for
 // them: {{ASKED}} is the day or time the client asked about, written by code.
-const OPTIONAL_PLACEHOLDERS = { new_round: ['ASKED'], counter_unavailable: ['ASKED'], window_unavailable: ['ASKED'] };
+const OPTIONAL_PLACEHOLDERS = { new_round: ['ASKED'], counter_unavailable: ['ASKED'], window_unavailable: ['ASKED'], reschedule_round: ['ASKED'] };
 
 const TEMPLATES = {
   intro: (f) => `${f.bcc ? `Thanks for the intro, ${f.employee_first}. I'll move you to BCC so your inbox stays quiet.` : `Thanks, ${f.employee_first}.`}\n\nHi ${f.names}, great to meet you. I help ${f.employee_first} with scheduling. Would one of these work for a ${f.duration_min}-minute ${f.location}?\n\n{{SLOTS}}\n\nLet me know which works best, or suggest another time and I'll work around it.`,
@@ -26,6 +27,8 @@ const TEMPLATES = {
   followup: (f) => `Hi ${f.names}, circling back on finding a time with ${f.employee_first}. These are still open:\n\n{{SLOTS}}\n\nIf none of them fit, tell me what works and I'll find something.`,
   ack: (f) => `Great, ${f.names}. {{TIME}} it is. I'll confirm with ${f.employee_first} and send the invite over shortly.`,
   confirmed: (f) => `You're all set, ${f.names}: {{TIME}}. The invite is on its way from ${f.employee_first}'s calendar${f.location_type === 'teams' ? ', Teams link included' : ''}.`,
+  reschedule_round: (f) => `Of course, ${f.names}, happy to move it. Here are some other times that work for ${f.employee_first}:\n\n{{SLOTS}}\n\nLet me know which suits you best.`,
+  rescheduled: (f) => `You're all set, ${f.names}: we've moved it to {{TIME}}. An updated invite is on its way from ${f.employee_first}'s calendar.`,
   logistics: (f) => `${{
     duration: `Good question, ${f.names}. We've set aside ${f.duration_min} minutes for it.`,
     format: `It'll be ${f.location}, ${f.names}.`,
@@ -136,7 +139,7 @@ function quoteHtml(target, zone) {
 /** Final client-facing email: body text + signature, HTML version + quote. */
 // A sign-off line before the signature, as a person writes one.
 function signoff(purpose) {
-  return ['ack', 'confirmed', 'handoff'].includes(purpose) ? 'Thanks,' : 'Best,';
+  return ['ack', 'confirmed', 'rescheduled', 'handoff'].includes(purpose) ? 'Thanks,' : 'Best,';
 }
 
 function renderClientEmail(ctx, body, fill, replyTarget, zone, employee, purpose) {
@@ -217,20 +220,22 @@ function internalMail(ctx, employee, subject, lines) {
   };
 }
 
-function vicConfirmationMail(ctx, employee, thread, offer, whenText, flags, tidToken) {
+function vicConfirmationMail(ctx, employee, thread, offer, whenText, flags, tidToken, movingFromText = null) {
   const heads = (flags || []).map((f) => HEADS_UP[f]).filter(Boolean);
   return internalMail(ctx, employee,
     `Confirm: ${clientLabel(thread)} — ${formatSlotShort(offer.start, employee.timezone)} [S-${tidToken}]`,
     [
       `Hi ${employee.first_name},`,
       '',
-      `${clientLabel(thread)} picked:`,
+      movingFromText ? `${clientLabel(thread)} asked to move your meeting (now ${movingFromText}) and picked:` : `${clientLabel(thread)} picked:`,
       '',
       `    ${whenText}`,
       `    ${thread.duration_min} minutes, ${locationPhrase(thread.location_type, thread.location_text)}`,
       '',
       heads.length ? `Heads-up: ${heads.join(' ')}\n` : null,
-      'Reply YES and I\'ll book it (the invite goes out from your calendar), NO and I\'ll offer them other times, or reply with a different day or time.',
+      movingFromText
+        ? 'Reply YES and I\'ll move the meeting (they get an updated invite from your calendar), NO and I\'ll offer them other times, or reply with a different day or time.'
+        : 'Reply YES and I\'ll book it (the invite goes out from your calendar), NO and I\'ll offer them other times, or reply with a different day or time.',
     ]);
 }
 
@@ -261,11 +266,12 @@ function vicNoticeMail(ctx, employee, thread, reason, excerpt, toldClient, tidTo
      toldClient ? `I let them know you'd be in touch, so it's over to you from here.` : `I haven't replied to them, so it's over to you from here.`]);
 }
 
-function vicStalledMail(ctx, employee, thread, tidToken) {
+function vicStalledMail(ctx, employee, thread, tidToken, wasRescheduling = false) {
   return internalMail(ctx, employee,
     `No reply: ${clientLabel(thread)} [S-${tidToken}]`,
     [`Hi ${employee.first_name},`, '',
      `${clientLabel(thread)} hasn't replied after my follow-up, so I've stopped and released the holds on your calendar.`, '',
+     wasRescheduling ? 'They had asked to move your meeting; the original time is still on your calendar.\n' : null,
      'If you still want the meeting, reach out to them directly or start a new thread with me copied.']);
 }
 

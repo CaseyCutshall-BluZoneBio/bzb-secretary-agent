@@ -2,7 +2,7 @@
 
 Three layers. All of them passed on 2026-09-30 against n8n 2.41.4, Node 24, and Postgres 14 (earlier runs: Postgres 16).
 
-## Unit tests: `npm test` (114 + 39 tests, ~2 s)
+## Unit tests: `npm test` (118 + 40 tests, ~2 s)
 
 Plain Node (≥ 20). No n8n, database, or network. `npm test` runs `test/unit/` and then the portal's own suite (`portal/test/`, an npm workspace).
 
@@ -16,9 +16,9 @@ Plain Node (≥ 20). No n8n, database, or network. `npm test` runs `test/unit/` 
 | `test/unit/delegated.test.js` | Delegated calendars: calendar reads and holds/bookings/releases go to the broker with the same event bodies; mail never does; `NeedsReconnect` → `NEEDS_VIC` with no client email; paused / not-connected triggers ignored with notices; pause doesn't affect running threads; matching by mail address; per-employee signature; prompts never say "Vic" or assume pronouns |
 | `portal/test/units.test.js` | Config (HTTPS origin only, redirect URI derived), AES-256-GCM round trip / tamper / wrong employee / key rotation, sealed sign-in state, Windows→IANA timezones (every mapped zone valid), settings validation and Outlook prefill, tenant / guest / domain rejection, MSAL error classification (reconnect vs account gone vs our own bad secret vs transient), log scrubbing |
 | `portal/test/web.test.js` | Over real HTTP, MSAL mocked: every route except `/login` redirects before sign-in; security headers on every response; spoofed `Host` / `X-Forwarded-*` ignored for redirects and the OAuth redirect URI; `__Host-` cookie names and attributes, other cookies ignored; PKCE/state/nonce; identical generic errors; connect stores encrypted tokens and prefill; CSRF and Origin checks; settings; pause; test email per mode; admin allowlist; offboarded sessions; rate limiting by socket address |
-| `portal/test/broker.test.js` | The broker is a separate listener the public server never routes; key auth; only three operations, on `/me`; Graph answers passed through; refresh-and-retry on 401; `NeedsReconnect` flags once with a code and no PII; account disabled → no employee email; an expired portal secret flags nobody; per-employee refresh serialization; daily keep-alive |
+| `portal/test/broker.test.js` | The broker is a separate listener the public server never routes; key auth; only four operations, on `/me`; Graph answers passed through; refresh-and-retry on 401; `NeedsReconnect` flags once with a code and no PII; account disabled → no employee email; an expired portal secret flags nobody; per-employee refresh serialization; daily keep-alive |
 
-## Database tests: `npm run test:db` (129 tests)
+## Database tests: `npm run test:db` (142 tests)
 
 ```bash
 PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres npm run test:db
@@ -38,11 +38,12 @@ This creates `sched_agent_test` (and the `sched_portal` role if missing), applie
 - the state machine
 - `search_path` pinning (n8n connects with the default path)
 - seeded defaults the code relies on (`max_horizon_days`)
+- `reschedule_tests.sql`: BOOKED → PROPOSED for a reschedule (logged), the move as a calendar item, a completed move superseding the old offer while keeping the same event
 - `portal_tests.sql`: upgrading in place (Vic stays `app`), grants (the portal role runs `portal_*` only; `PUBLIC` runs nothing), sign-in attaching to an existing row vs creating one, connect + prefill that never overwrites saved settings, settings CHECKs, one reconnect email per incident through the outbox (run mode respected), account-disabled alert, `calendar_auth` at claim time, the needs-reconnect failure path, hold releases that wait (not claimed, not duplicated, not failed) while the token is dead and run after reconnecting, sessions, threads, admin overview
 
 You can run the test file against the production database too. It never commits.
 
-## End-to-end: `npm run test:e2e` (13 scenarios, ~5 min)
+## End-to-end: `npm run test:e2e` (14 scenarios, ~6 min)
 
 This runs **the real generated workflows in a real n8n** against:
 
@@ -74,6 +75,7 @@ Set `E2E_DUMP=/tmp/sent.txt` to get a readable copy of every email Sarah sent.
 | delegated employee | A self-service employee's reads, 3 holds, booking and hold releases all go through the broker with **their** token (never the app credential); the invite is on their calendar; mail stays app-only; the signature names them |
 | dead token | Revoked mid-thread: one reconnect email, `NEEDS_VIC` with the specific reason, nothing to the client; a new request is refused with a notice and no broker call; after reconnecting, the stuck holds are released |
 | paused employee | A new request is ignored with a "Paused" notice; nothing reaches the client |
+| reschedule | After booking, the client asks to move it: a new round, the client picks, the employee says YES, and the **same** event is moved (PATCH, no second event); the old offer is superseded and the thread is BOOKED again |
 | redraft | A model draft that breaks a rule (it wrote a day name) is redrafted once through the Processor's **LLM: redraft** node; the client gets the model's second wording, not the template |
 | error workflow | A failing Poller run emails Casey via Sarah's mailbox; the next run recovers |
 | clean finish | Every inbound email reached a final disposition; no failed outbox items |

@@ -22,7 +22,7 @@ flowchart LR
   N -- "app-only (unchanged)" --> M[Graph: Sarah's mailbox]
 ```
 
-The broker never hands a token to n8n. n8n names an employee and one of three operations (`calendar_view`, `create_event`, `delete_event`); the broker calls Graph on `/me/...` with that employee's token and returns Graph's status and body unchanged (`docs/08-decisions.md`, D17). Tokens therefore never appear in n8n's execution history, and n8n can't reach any other calendar the employee happens to have access to.
+The broker never hands a token to n8n. n8n names an employee and one of four operations (`calendar_view`, `create_event`, `delete_event`, and `update_event`, which can only change an event's start and end and is used to move a meeting when rescheduling); the broker calls Graph on `/me/...` with that employee's token and returns Graph's status and body unchanged (`docs/08-decisions.md`, D17). Tokens therefore never appear in n8n's execution history, and n8n can't reach any other calendar the employee happens to have access to.
 
 ## 1. Entra: the "BZB Sarah Portal" app
 

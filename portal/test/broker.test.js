@@ -186,3 +186,18 @@ test('daily keep-alive refreshes every connected employee and flags a dead one b
   // once flagged, it's no longer on the list (no daily email storm)
   assert.deepEqual(await refreshAll({ db: P.db, tokens: P.tokens, logger: P.logger }), { employees: 0, ok: 0 });
 });
+
+test('update_event (reschedule) maps to PATCH /me/events/{id} and may only change start and end', async () => {
+  await start({ graph: H.defaultGraph({ 'PATCH ^/me/events/': ({ opts }) => ({ status: 200, body: { id: 'EV9', ...opts.body } }) }) });
+  const when = { start: { dateTime: '2026-10-15T15:00:00', timeZone: 'America/New_York' }, end: { dateTime: '2026-10-15T15:30:00', timeZone: 'America/New_York' } };
+  const ok = await call({ employee_upn: 'brad@bluzonebio.com', op: 'update_event', event_id: 'EV9', event: when });
+  assert.equal(ok.status, 200);
+  assert.equal(P.graph.calls[0].method, 'PATCH');
+  assert.equal(P.graph.calls[0].path, '/me/events/EV9');
+  assert.deepEqual(P.graph.calls[0].body, when);
+  for (const bad of [{ ...when, attendees: [{ emailAddress: { address: 'x@evil.com' } }] }, { start: when.start }, null]) {
+    assert.equal((await call({ employee_upn: 'brad@bluzonebio.com', op: 'update_event', event_id: 'EV9', event: bad })).status, 400);
+  }
+  assert.equal((await call({ employee_upn: 'brad@bluzonebio.com', op: 'update_event', event: when })).status, 400, 'event_id required');
+  assert.equal(P.graph.calls.length, 1);
+});

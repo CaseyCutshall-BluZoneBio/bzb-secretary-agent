@@ -71,7 +71,9 @@ stateDiagram-v2
   STALLED --> PROPOSED: client came back
   PROPOSED --> NEEDS_VIC
   AWAITING_VIC --> NEEDS_VIC
-  BOOKED --> NEEDS_VIC: client writes after booking
+  BOOKED --> NEEDS_VIC: cancellation / a question after booking
+  BOOKED --> PROPOSED: client asks to reschedule
+  BOOKED --> CLIENT_ACCEPTED: client names a new time
   NEEDS_VIC --> CLOSED
   PROPOSED --> CLOSED: Vic takes over
   BOOKED --> CLOSED

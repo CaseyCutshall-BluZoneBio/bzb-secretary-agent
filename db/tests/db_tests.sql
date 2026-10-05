@@ -500,8 +500,8 @@ SELECT set_mode('live');
 SELECT pg_temp.expect_error('state: cannot insert a thread in PROPOSED',
   $q$INSERT INTO sched.threads (conversation_id, employee_id, state, client_addresses, duration_min, location_type, trigger_message_id)
      SELECT 'X', id, 'PROPOSED', '{x@x.com}', 30, 'teams', 't' FROM sched.employees LIMIT 1$q$, 'must start in NEW');
-SELECT pg_temp.expect_error('state: BOOKED → PROPOSED blocked',
-  $q$UPDATE sched.threads SET state = 'PROPOSED' WHERE conversation_id = 'CONV-1'$q$, 'illegal thread transition');
+SELECT pg_temp.expect_error('state: BOOKED → STALLED blocked (BOOKED may only reschedule, escalate or close)',
+  $q$UPDATE sched.threads SET state = 'STALLED' WHERE conversation_id = 'CONV-1'$q$, 'illegal thread transition');
 SELECT pg_temp.expect_error('state: NEEDS_VIC requires a reason',
   $q$UPDATE sched.threads SET state = 'NEEDS_VIC', escalation_reason = NULL WHERE conversation_id = 'CONV-7'$q$, 'check constraint');
 

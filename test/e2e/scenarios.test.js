@@ -371,6 +371,50 @@ test('a client email that breaks a rule is redrafted once by the model, not repl
 });
 
 // -----------------------------------------------------------------------------
+test('reschedule: after booking, "can we push it?" → new times → pick → YES → the same event is moved', async () => {
+  const trig = mock.deliver({ from: VIC, to: ['ola@contoso.com'], cc: [SARAH], authAs: 'Internal', subject: 'Ola / Vic', body: 'Sarah will find us a time.' });
+  await waitFor('intro to Ola', () => sentTo('ola@contoso.com')[0]);
+  mock.deliver({ from: 'ola@contoso.com', to: [SARAH], conversationId: trig.conversationId, subject: 'RE: Ola / Vic', body: 'Option 1 works.' });
+  let confirm = await waitFor('confirmation request', () => sentTo(VIC, (m) => /^Confirm:/.test(m.subject) && /ola/i.test(m.subject))[0]);
+  mock.deliver({ from: VIC, to: [SARAH], authAs: 'Internal', conversationId: confirm.conversationId, subject: `RE: ${confirm.subject}`, body: 'yes' });
+  const event = await waitFor('booked', () => Object.values(S.events).find((e) => (e.attendees || []).some((a) => a.emailAddress.address === 'ola@contoso.com')));
+  await waitFor('thread BOOKED', async () => (await q1('SELECT state FROM sched.threads WHERE conversation_id = $1', [trig.conversationId])).state === 'BOOKED');
+  await waitFor('confirmation to Ola', () => sentTo('ola@contoso.com').length === 3);
+  const originalStart = event.start.dateTime;
+
+  // The client asks to move it
+  S.llmOverride = (schema, user) => (schema === 'client' && /push it/i.test(user)
+    ? JSON.stringify({ intent: 'reschedule', accepted_option: null, proposed_times: [], constraints: { earliest_date: null, latest_date: null, days_of_week: [], time_of_day: 'any' },
+                       other_timezone: null, question: null, summary: 'wants to move it' }) : undefined);
+  mock.deliver({ from: 'ola@contoso.com', to: [SARAH], conversationId: trig.conversationId, subject: 'RE: Ola / Vic', body: 'Something came up, can we push it?' });
+  const round = await waitFor('new times for Ola', () => sentTo('ola@contoso.com')[3]);
+  S.llmOverride = null;
+  assert.equal((bodyOf(round).match(/• /g) || []).length, 3);
+  assert.equal((await q1('SELECT state FROM sched.threads WHERE conversation_id = $1', [trig.conversationId])).state, 'PROPOSED');
+
+  // picks the first new option (option 4 internally), Vic says yes
+  mock.deliver({ from: 'ola@contoso.com', to: [SARAH], conversationId: trig.conversationId, subject: 'RE: Ola / Vic', body: 'Option 4 works.' });
+  confirm = await waitFor('move confirmation request', () => sentTo(VIC, (m) => /^Confirm:/.test(m.subject) && /ola/i.test(m.subject) && /move your meeting/.test(bodyOf(m)))[0]);
+  mock.deliver({ from: VIC, to: [SARAH], authAs: 'Internal', conversationId: confirm.conversationId, subject: `RE: ${confirm.subject}`, body: 'yes' });
+  await waitFor('event moved', () => event.start.dateTime !== originalStart);
+  assert.equal(Object.values(S.events).filter((e) => (e.attendees || []).some((a) => a.emailAddress.address === 'ola@contoso.com')).length, 1,
+    'the same event was moved, not a second one created');
+  await waitFor('"rescheduled" confirmation sent to Ola', async () =>
+    (await q1(`SELECT count(*)::int AS n FROM sched.outbox x JOIN sched.threads th ON th.id = x.thread_id
+                WHERE th.conversation_id = $1 AND x.kind = 'reply' AND x.purpose = 'rescheduled' AND x.status = 'done'`, [trig.conversationId])).n === 1);
+  assert.equal(sentTo('ola@contoso.com').length, 6, 'intro, ack, confirmed, new times, ack, rescheduled');
+  const t = await waitFor('thread BOOKED again', async () => {
+    const r = await q1('SELECT state, booked_event_id FROM sched.threads WHERE conversation_id = $1', [trig.conversationId]);
+    return r.state === 'BOOKED' && r;
+  });
+  assert.equal(t.booked_event_id, event.id);
+  const offs = (await db.query(`SELECT option_no, status FROM sched.offers o JOIN sched.threads th ON th.id = o.thread_id
+                                 WHERE th.conversation_id = $1 AND status IN ('booked', 'superseded') ORDER BY option_no`, [trig.conversationId])).rows;
+  assert.deepEqual(offs.filter((o) => o.status === 'booked').map((o) => o.option_no), [4]);
+  assert.ok(offs.some((o) => o.option_no === 1 && o.status === 'superseded'));
+});
+
+// -----------------------------------------------------------------------------
 test('a failing workflow triggers the error workflow, which emails Casey', async () => {
   S.failNext['GET /mailFolders/inbox/messages/delta$'] = 500;
   const alert = await waitFor('failure alert to Casey', () =>

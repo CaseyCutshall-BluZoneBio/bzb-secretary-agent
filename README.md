@@ -81,14 +81,14 @@ It starts in mode `off`. Nothing reads or sends mail until you change that delib
 
 ```bash
 npm install
-npm test                 # 114 unit tests (slots, routing, decisions, validator, Graph requests) + 39 portal tests
-npm run test:db          # 129 database tests (needs a Postgres; see docs/06-testing.md)
-N8N_BIN=... npm run test:e2e       # real n8n + mock Graph/LLM/broker, 13 scenarios (docs/06-testing.md)
+npm test                 # 118 unit tests (slots, routing, decisions, validator, Graph requests) + 40 portal tests
+npm run test:db          # 142 database tests (needs a Postgres; see docs/06-testing.md)
+N8N_BIN=... npm run test:e2e       # real n8n + mock Graph/LLM/broker, 14 scenarios (docs/06-testing.md)
 ```
 
 ## What v1 does not do
 
-- **Reschedules or cancellations.** Any client reply after booking goes to Vic.
+- **Cancellations.** A client who wants to cancel is handed to the employee. (Rescheduling is handled: Sarah offers new times, the employee confirms, and the existing invite is moved.)
 - **Client timezones.** Every time is offered in Vic's timezone with the UTC offset spelled out. If a client proposes a time in another timezone, the thread goes to Vic.
 - **Requests that don't CC Sarah.** If Vic forwards a request to Sarah or BCCs her, she won't act on it; she has to be on To or CC.
 - **Picking up again after Vic takes over.** Once a thread is `NEEDS_VIC`, `STALLED` or `CLOSED`, Sarah stays out of it. Vic *can* start a new request in the same email thread once the earlier one is booked, closed or stalled ("Sarah, find us a follow-up time").
