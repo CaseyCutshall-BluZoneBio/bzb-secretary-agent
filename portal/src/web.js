@@ -185,12 +185,20 @@ function createPublicApp({ config, db, tokens, graph, msalFactory, keyRing, logg
       if (req.method === 'GET' && p === '/static/portal.css') return r.static(200, 'text/css; charset=utf-8', CSS);
 
       // Cross-site form posts are refused outright (CSRF tokens apply as well).
-      if (req.method === 'POST' && req.headers.origin && req.headers.origin !== config.origin) {
+      // Browsers send "Origin: null" for a form POST from a page with
+      // Referrer-Policy: no-referrer (ours), so "null" carries no information
+      // and is treated like a missing header; any real foreign origin is refused.
+      const origin = req.headers.origin;
+      if (req.method === 'POST' && origin && origin !== 'null' && origin !== config.origin) {
+        logger.warn('post_refused', { reason: 'foreign_origin', path: p, origin: String(origin).slice(0, 100) });
         return r.html(403, V.loginPage({ error: true }));
       }
       if (p === '/login' || p === '/auth/callback') {
         const lim = p === '/login' ? limit.login : limit.callback;
-        if (!lim.allow(socketAddress(req))) return signInFailed(r, 429);
+        if (!lim.allow(socketAddress(req))) {
+          logger.warn('sign_in_failed', { reason: 'rate_limited', path: p });
+          return signInFailed(r, 429);
+        }
         if (p === '/auth/callback') return req.method === 'GET' ? await callback(req, r, url) : r.redirect('/login');
         if (req.method === 'POST') return await startAuth(r, 'signin', null);
         if (await loadSession(req)) return r.redirect('/');

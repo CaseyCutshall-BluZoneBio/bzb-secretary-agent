@@ -270,3 +270,21 @@ test('/login and /auth/callback are rate-limited per socket address; the error p
   // signed-in pages are not limited by this
   assert.equal((await H.request(P.publicPort, { path: '/static/portal.css' })).status, 200);
 });
+
+test('a real browser form post (Origin: null, because of Referrer-Policy: no-referrer) works', async () => {
+  // POST /login from the sign-in page, as a browser sends it
+  const start = await H.request(P.publicPort, { method: 'POST', path: '/login', ...H.form({}, { Origin: 'null' }) });
+  assert.equal(start.status, 302);
+  assert.ok(start.headers.location.startsWith('https://login.microsoftonline.com/'));
+  // a signed-in form post with Origin: null still needs (and passes with) the CSRF token
+  const { cookie } = await H.signIn(P);
+  const csrf = await H.csrfFor(P, cookie);
+  const ok = await H.request(P.publicPort, { method: 'POST', path: '/pause', ...H.form({ csrf, action: 'pause' }, { Cookie: cookie, Origin: 'null' }) });
+  assert.equal(ok.headers.location, `${ORIGIN}/?m=paused`);
+  const forged = await H.request(P.publicPort, { method: 'POST', path: '/pause', ...H.form({ action: 'resume' }, { Cookie: cookie, Origin: 'null' }) });
+  assert.equal(forged.status, 403, 'no CSRF token, no change');
+  // a real foreign origin is refused, and logged
+  const evil = await H.request(P.publicPort, { method: 'POST', path: '/login', ...H.form({}, { Origin: 'https://evil.example' }) });
+  assert.equal(evil.status, 403);
+  assert.ok(P.logger.lines.some((l) => l.event === 'post_refused' && l.reason === 'foreign_origin'));
+});

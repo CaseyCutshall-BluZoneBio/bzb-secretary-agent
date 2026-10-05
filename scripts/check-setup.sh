@@ -126,9 +126,10 @@ else
   ok "portal container running"
   c=$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/login)
   [ "$c" = "200" ] && ok "portal UI answers on 127.0.0.1:3100" || bad "portal UI: HTTP $c" "docker compose logs sarah-portal | tail"
-  if curl -s -m 3 -o /dev/null http://127.0.0.1:3001/internal/v1/health; then
-    bad "broker port 3001 is published on the host" "remove any 3001 port mapping: only 127.0.0.1:3100:3000 may be published"
-  else ok "broker port 3001 not published"; fi
+  pub=$(docker port sarah-portal 2>/dev/null)
+  if echo "$pub" | grep -q '^3001/'; then
+    bad "broker port 3001 is published on the host" "remove the 3001 line under ports: in compose.portal.yml; only 127.0.0.1:3100:3000 may be published"
+  else ok "broker port 3001 not published (portal publishes: $(echo "$pub" | tr '\n' ' '))"; fi
   h=$(n8n_node "fetch('http://sarah-portal:3001/internal/v1/health').then(r=>r.text()).then(console.log,e=>console.log('ERR '+e.message))")
   [[ "$h" == *'"ok":true'* ]] && ok "n8n reaches the broker" || bad "n8n can't reach the broker" "n8n must be on bzb-ai_default; portal must be up ($h)"
 fi

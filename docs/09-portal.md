@@ -42,6 +42,8 @@ This is a **second, separate** app registration. Leave "BZB Scheduling Agent" ex
 6. **Enterprise applications → BZB Sarah Portal → Properties → Assignment required: Yes.** This is mandatory: the portal is on the internet.
 7. **Create the group:** Entra → Groups → New group, Security, `Sarah users`. Then **Enterprise applications → BZB Sarah Portal → Users and groups → Add user/group →** `Sarah users`.
    - To give someone Sarah: add them to `Sarah users`. They then sign in at the portal.
+   - If you can't pick a group in **Users and groups** (only users appear), the tenant has no Entra ID P1, which group assignment requires. Assign each person directly there instead; it works the same.
+   - Without any assignment, sign-in fails with the generic error and the portal log shows `sign_in_failed … entra_access_denied`.
    - Anyone not in the group is stopped by Entra before the portal sees them (AADSTS50105). The portal shows the same generic "Sign-in didn't work" page as for any other failure.
 8. Write down the **Directory (tenant) ID** (a GUID, not a domain) and the **Application (client) ID**.
 
