@@ -81,3 +81,8 @@ In shadow testing on the local Qwen model, many client emails fell back to the f
 - **One redraft:** a draft that breaks a rule goes back to the model once, with the exact problem quoted. Only a second failure falls back to the template. `draft_source` records `model`, `model_retry` or `template`.
 
 At the same time, the voice guidance became more conversational: respond to what the client said, match their tone, no stock phrases. When the client's window is fully booked, Sarah now offers the closest times after it (`window_unavailable`) instead of handing off. The disclosure (D13) is unchanged.
+
+### D21 · 2026-10-05 · Human-sounding, never deceptive; replies stay instant
+Client emails should read like a capable human assistant wrote them: options as bullets with start times and the timezone stated once (no option numbers, no "reply with the number"), a sign-off line, and the conversational voice from D20. The "(AI)" signature line stays (D13). When a client asks whether Sarah is a bot or an AI (`ask_if_ai`), she answers honestly in one line and carries on, instead of handing off. A draft that doesn't plainly say "AI" is rejected, and the template does say it.
+
+Considered and declined for now: delaying replies by a few minutes and holding them to business hours to look more human. Casey prefers instant replies.

@@ -431,6 +431,9 @@ function decideClient(S, parsed) {
   const why = (base) => `${base}${cls.summary ? `: ${cls.summary}` : ''}`;
   const ack = { type: 'ignore', disposition: 'client_ack', attach: true, touch: true };
 
+  // "Are you a bot?": answer honestly in any open state, then carry on.
+  if (intent === 'ask_if_ai') return { type: 'ai_reply' };
+
   if (t.state === 'BOOKED') {
     if (intent === 'thanks' || intent === 'accept') return ack;
     return { type: 'escalate', reason: why('Client wrote after the meeting was booked'), handoff: true, question: cls.question };
@@ -549,7 +552,7 @@ function act(S, calResp) {
   const a = S.action;
   const handlers = { ignore: doIgnore, start: doStart, propose: doPropose, accept_offer: doAcceptOffer,
                      counter_times: doCounterTimes, book: doBook, escalate: doEscalate, close: doClose,
-                     stall: doStall, remind: doRemind, clarify: doClarify, notify_no_clients: doNoClients };
+                     stall: doStall, remind: doRemind, clarify: doClarify, notify_no_clients: doNoClients, ai_reply: doAiReply };
   const h = handlers[a.type];
   if (!h) throw new Error(`unknown action ${a.type}`);
   h(S, a, busy);
@@ -884,6 +887,12 @@ function doClose(S, a) {
   S.plan.thread.set.closed_reason = a.reason;
   S.plan.thread.transitions.push('CLOSED');
   releaseOffers(S, liveThreadOffers(S.ctx), 'expired');
+}
+
+// An honest one-line answer to "are you a bot?"; the thread carries on as it was.
+function doAiReply(S) {
+  touchIfClient(S);
+  queueClientEmail(S, 'ai_disclosure', {});
 }
 
 function doStall(S) {

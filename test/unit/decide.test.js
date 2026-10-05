@@ -620,3 +620,33 @@ test('constraint field-name variants from the model are understood ("date", "sta
     assert.ok(plan.offers.insert.every((o) => o.start.startsWith('2026-10-08')), JSON.stringify(constraints));
   }
 });
+
+test('"Are you a bot?" → an honest one-line answer; the thread carries on (no hand-off, no new times)', () => {
+  const { plan } = run(clientCtx('Quick question, are you a real person or a bot?'), {
+    classify: llm(CLIENT({ intent: 'ask_if_ai', summary: 'asks if Sarah is a bot' })),
+    draft: llm({ body: 'Fair question, Dana. I\'m an AI assistant who helps Vic with scheduling. Happy to keep finding a time, or I can loop Vic in.' }),
+  });
+  const reply = plan.outbox.find((o) => o.kind === 'reply');
+  assert.equal(reply.purpose, 'ai_disclosure');
+  assert.equal(reply.payload.draft_source, 'model');
+  assert.match(reply.payload.body_text, /I'm an AI assistant/);
+  assert.deepEqual(plan.thread.transitions, [], 'still PROPOSED');
+  assert.deepEqual(plan.offers.insert, []);
+  assert.deepEqual(plan.offers.update, [], 'the offered times still stand');
+  assert.ok(!plan.outbox.some((o) => o.purpose === 'vic_notice'));
+  // also after booking
+  const booked = run(clientCtx('Was that an automated email?', { thread: { state: 'BOOKED', booked_event_id: 'E1' } }), {
+    classify: llm(CLIENT({ intent: 'ask_if_ai' })),
+  });
+  assert.equal(booked.plan.outbox.find((o) => o.kind === 'reply').purpose, 'ai_disclosure');
+  assert.deepEqual(booked.plan.thread.transitions, []);
+});
+
+test('a reply to "are you a bot?" that dodges the question is never sent', () => {
+  const dodge = llm({ body: 'Ha, I get that a lot, Dana! I just like to be quick. Want to pick one of those times?' });
+  const { plan } = run(clientCtx('Are you an AI?'), { classify: llm(CLIENT({ intent: 'ask_if_ai' })), draft: dodge, redraft: dodge });
+  const reply = plan.outbox.find((o) => o.kind === 'reply');
+  assert.equal(reply.payload.draft_source, 'template');
+  assert.match(reply.payload.body_text, /^Good question, Dana\. Yes, I'm an AI assistant that helps Vic with scheduling\./);
+  assert.ok(reply.payload.draft_errors.some((e) => e.startsWith('ai_disclosure')));
+});

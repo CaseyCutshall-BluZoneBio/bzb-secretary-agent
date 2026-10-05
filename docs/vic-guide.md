@@ -72,3 +72,4 @@ You'll get one email, **"Action needed: reconnect your calendar to Sarah"**. Cli
 - If a client needs a second round, options continue numbering (4, 5, 6…), so there's never confusion about which "option 2" they meant.
 - Her emails are signed "Scheduling Assistant to *your name* (AI)", so clients know she's an assistant.
 - **My threads** in the portal lists what she's working on for you.
+- If a client asks whether she's an AI, she says so honestly and carries on scheduling (or offers to loop you in).

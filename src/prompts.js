@@ -85,7 +85,7 @@ const SCHEMAS = {
     properties: {
       intent: {
         type: 'string',
-        enum: ['accept', 'counter', 'reject_all', 'question', 'thanks', 'reschedule', 'cancel', 'own_link', 'delegate', 'other'],
+        enum: ['accept', 'counter', 'reject_all', 'question', 'ask_if_ai', 'thanks', 'reschedule', 'cancel', 'own_link', 'delegate', 'other'],
       },
       accepted_option: { type: ['integer', 'null'] },
       proposed_times: PROPOSED_TIMES_SCHEMA,
@@ -151,6 +151,7 @@ function classifyClientPrompt({ employeeFirst, zone, table, optionsText, from, s
       '- counter: they propose specific other times, or give a window ("Thursday afternoon", "the week of the 20th", "the following week", "anything later?").',
       '- reject_all: none of the options work and they give no alternative.',
       '- question: they ask something that needs a person (agenda, attendees, prep, pricing, anything not about picking a time).',
+      '- ask_if_ai: they ask whether Sarah is a bot, an AI, automated, or a real person (and nothing else that needs a person).',
       '- thanks: pure acknowledgement with nothing to act on.',
       '- reschedule / cancel: they want to move or cancel an already-agreed meeting.',
       `- own_link: they send their own booking link (Calendly etc.) or ask ${employeeFirst} to book with them.`,
@@ -212,6 +213,7 @@ const PURPOSE_GUIDE = {
   followup: () => 'The client has not replied to the earlier options. Write a short, friendly nudge and re-share the options. Put {{SLOTS}} on its own line.',
   ack: (f) => `The client picked {{TIME}}. Thank them and say you'll confirm with ${f.employee_first} and send the calendar invite shortly. Use {{TIME}} exactly once.`,
   confirmed: (f) => `The meeting is booked for {{TIME}}. Say the calendar invite is coming from ${f.employee_first}'s calendar${f.location_type === 'teams' ? ' with the Teams link' : ''}. Use {{TIME}} exactly once.`,
+  ai_disclosure: (f) => `The client asked whether you are a bot or an AI. Answer honestly and plainly that you are an AI assistant who helps ${f.employee_first} with scheduling (say "AI"). Don't dodge, joke it away, or claim to be human. Then offer to keep finding a time, or to loop ${f.employee_first} in directly if they'd prefer. No placeholders.`,
   handoff: (f) => `The client asked something only ${f.employee_first} can answer${f.question ? ` (${f.question})` : ''}. Say you'll pass it to ${f.employee_first}, who will follow up. Do not answer the question. No placeholders.`,
 };
 
