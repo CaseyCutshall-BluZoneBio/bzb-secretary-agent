@@ -110,7 +110,7 @@ CREATE TABLE threads (
   -- thread; outbound recipients are validated against this list.
   client_addresses       text[] NOT NULL CHECK (cardinality(client_addresses) > 0),
   client_names           jsonb NOT NULL DEFAULT '{}',    -- address → display name from headers
-  other_internal         text[] NOT NULL DEFAULT '{}',   -- other BZB people Vic CC'd
+  other_internal         text[] NOT NULL DEFAULT '{}',   -- people on the email Vic left out of the meeting: cc'd, not invited
   duration_min           int  NOT NULL CHECK (duration_min BETWEEN 10 AND 240),
   location_type          text NOT NULL CHECK (location_type IN ('teams', 'in_person', 'phone')),
   location_text          text,

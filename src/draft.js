@@ -2,8 +2,9 @@
 // Client-email guardrails and all internal (templated) emails.
 //
 // The model writes words; this module decides whether those words may be sent.
-// A draft that mentions any date, time, timezone, link, or address — or that
-// misuses a placeholder — is thrown away and replaced by a fixed template.
+// A draft that mentions a day or time that isn't really on offer, or any
+// timezone, link, or address, or that misuses a placeholder, is thrown away and
+// replaced by a fixed template.
 const { htmlEscape, textToHtml, joinNames, lower, isInternal, setting, employeeAddress } = require('./util');
 const { formatSlotShort, locationPhrase } = require('./format');
 const { DateTime } = require('./luxon');
@@ -12,6 +13,7 @@ const PLACEHOLDERS = {
   intro: ['SLOTS'], new_round: ['SLOTS'], counter_unavailable: ['SLOTS'], window_unavailable: ['SLOTS'], taken: ['SLOTS'],
   employee_declined: ['SLOTS'], followup: ['SLOTS'], ack: ['TIME'], confirmed: ['TIME'], handoff: [], ai_disclosure: [], logistics: [],
   reschedule_round: ['SLOTS'], rescheduled: ['TIME'],
+  group_partial: ['SLOTS'], group_counter: ['SLOTS'], group_no_overlap: ['SLOTS'], group_nudge: ['SLOTS'],
 };
 // Placeholders a draft MAY use (at most once), when code has the text for
 // them: {{ASKED}} is the day or time the client asked about, written by code.
@@ -24,7 +26,13 @@ const TEMPLATES = {
   window_unavailable: (f) => `Thanks, ${f.names}. Unfortunately ${f.employee_first} is booked up then, but these are the closest open times:\n\n{{SLOTS}}`,
   taken: (f) => `Sorry, ${f.names}, that slot was just taken. These are still open:\n\n{{SLOTS}}`,
   employee_declined: (f) => `Sorry, ${f.names}, that time won't work for ${f.employee_first} after all. Could one of these work instead?\n\n{{SLOTS}}`,
-  followup: (f) => `Hi ${f.names}, circling back on finding a time with ${f.employee_first}. These are still open:\n\n{{SLOTS}}\n\nIf none of them fit, tell me what works and I'll find something.`,
+  followup: (f) => (f.waiting_on
+    ? `Hi ${f.waiting_on}, circling back on finding a time with ${f.employee_first}. ${f.answered} already let me know; could you tell me which of these work for you?\n\n{{SLOTS}}`
+    : `Hi ${f.names}, circling back on finding a time with ${f.employee_first}. These are still open:\n\n{{SLOTS}}\n\nIf none of them fit, tell me what works and I'll find something.`),
+  group_partial: (f) => `Thanks, ${f.answered}. ${f.waiting_on}, ${f.open_count === 1 ? 'does this time work for you as well' : 'which of these work for you'}?\n\n{{SLOTS}}`,
+  group_counter: (f) => `Thanks for suggesting that, ${f.answered}. ${f.employee_first} is free then. ${f.waiting_on}, does it work for you too?\n\n{{SLOTS}}`,
+  group_no_overlap: (f) => `Thanks, everyone. It looks like none of those times worked for all of you, so here are a few more:\n\n{{SLOTS}}\n\nCould each of you let me know which work?`,
+  group_nudge: (f) => `Hi ${f.waiting_on}, ${f.answered} can do the time below. Does it work for you too?\n\n{{SLOTS}}`,
   ack: (f) => `Great, ${f.names}. {{TIME}} it is. I'll confirm with ${f.employee_first} and send the invite over shortly.`,
   confirmed: (f) => `You're all set, ${f.names}: {{TIME}}. The invite is on its way from ${f.employee_first}'s calendar${f.location_type === 'teams' ? ', Teams link included' : ''}.`,
   reschedule_round: (f) => `Of course, ${f.names}, happy to move it. Here are some other times that work for ${f.employee_first}:\n\n{{SLOTS}}\n\nLet me know which suits you best.`,
@@ -57,7 +65,88 @@ const FORBIDDEN = [
   ['email', /[\w.+-]+@[\w-]+\.[\w.-]+/],
   ['phone', /\+?\d[\d\s().-]{8,}\d/],
   ['human_claim', /\b(i am|i'm)\s+(a\s+)?(real\s+)?(human|person)\b/i],
+  ['backstory', /\b(i|i've)\s+(ski|skied|play|played|studied|graduated|went to)\b|\bmy\s+(degree|master'?s|studies|classes|school|team|hobby|hobbies|weekend|family)\b|\b(i am|i'm)\s+\d{2}\b|\b(university of colorado|cu boulder|boulder|volleyball)\b/i],
 ];
+
+// Rules that checkMentions replaces when the email may name days and times.
+const MENTION_RULES = new Set(['weekday', 'weekday_abbrev', 'month', 'month_may', 'month_abbrev', 'clock_ampm', 'clock_24h', 'noon', 'ordinal']);
+
+const MONTH_KEYS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const FULL_DAY = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b/gi;
+const ABBREV_DAY = /\b(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\.?,?\s+\d/gi;
+const PART_OF_DAY = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\s+(morning|afternoon|evening|night)\b/gi;
+const MONTH_DAY = /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/gi;
+const BARE_MONTH = /\b(january|february|march|april|june|july|august|september|october|november|december)\b/gi;
+const ORDINAL = /\b(\d{1,2})(?:st|nd|rd|th)\b/gi;
+
+// Every clock time in the text: { text, index, minutes, exact } (exact: am/pm is known).
+function clocks(text) {
+  const out = [];
+  const add = (m, h, min, mer) => {
+    const hour = Number(h) % 12 + (/^p/i.test(mer || '') ? 12 : 0);
+    out.push({ text: m[0], index: m.index, minutes: (mer ? hour : Number(h)) * 60 + Number(min || 0), exact: !!mer });
+  };
+  for (const m of text.matchAll(/\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)(?![a-z])/gi)) add(m, m[1], m[2], m[3]);
+  for (const m of text.matchAll(/\b(\d{1,2}):(\d{2})\b(?!\s*(?:a\.?m|p\.?m))/gi)) add(m, m[1], m[2], Number(m[1]) > 12 ? 'pm' : null);
+  for (const m of text.matchAll(/\b(?:at|around)\s+(\d{1,2})\b(?![:\d]|\s*(?:a\.?m|p\.?m|%|minutes?|mins?|hours?|people))/gi)) add(m, m[1], 0, null);
+  for (const m of text.matchAll(/\b(noon|midday)\b/gi)) out.push({ text: m[0], index: m.index, minutes: 720, exact: true });
+  for (const m of text.matchAll(/\bmidnight\b/gi)) out.push({ text: m[0], index: m.index, minutes: 0, exact: true });
+  return out;
+}
+
+const sameClock = (slotMinutes, c) => (c.exact ? slotMinutes === c.minutes : slotMinutes % 720 === c.minutes % 720);
+
+// The day a clock time is attached to ("Friday at 2pm", "October 9 at 2pm"), if any.
+function dayBefore(text, index) {
+  const tail = text.slice(Math.max(0, index - 30), index);
+  const last = (re) => [...tail.matchAll(re)].pop();
+  const free = (m) => m && !/[.;!?\n]|\b(but|or|and)\b/i.test(tail.slice(m.index + m[0].length));
+  const md = last(MONTH_DAY);
+  if (free(md)) return { month: md[1].slice(0, 3).toLowerCase(), dayOfMonth: Number(md[2]) };
+  const wd = last(FULL_DAY);
+  if (free(wd)) return { day: wd[1].slice(0, 3).toLowerCase() };
+  return null;
+}
+
+// Holds every day and time the model wrote to the list code gave it. A day the
+// client named themselves may be repeated; a clock time may not, since that
+// could read as agreeing to it.
+function checkMentions(text, m) {
+  const errors = [];
+  const saidByClient = (s) => m.client_text.includes(s.toLowerCase());
+  const onDate = (month, dayOfMonth) => m.dates.some((d) => Number(d.slice(5, 7)) === MONTH_KEYS.indexOf(month) + 1 && Number(d.slice(8)) === dayOfMonth);
+
+  for (const x of text.matchAll(FULL_DAY)) {
+    if (!m.days.includes(x[1].slice(0, 3).toLowerCase()) && !saidByClient(x[1])) errors.push(`weekday: "${x[0]}"`);
+  }
+  for (const x of text.matchAll(ABBREV_DAY)) {
+    if (!m.days.includes(x[1].slice(0, 3).toLowerCase())) errors.push(`weekday_abbrev: "${x[0]}"`);
+  }
+  for (const x of text.matchAll(PART_OF_DAY)) {
+    const day = x[1].slice(0, 3).toLowerCase();
+    const part = (t) => (t < 720 ? 'morning' : t < 1020 ? 'afternoon' : 'evening');
+    const want = x[2].toLowerCase() === 'night' ? 'evening' : x[2].toLowerCase();
+    if (!m.window_days.includes(day) && m.days.includes(day) && !m.slots.some((s) => s.day === day && part(s.minutes) === want)) {
+      errors.push(`weekday: "${x[0]}" has no option then`);
+    }
+  }
+  for (const x of text.matchAll(MONTH_DAY)) {
+    if (!onDate(x[1].slice(0, 3).toLowerCase(), Number(x[2])) && !saidByClient(x[0])) errors.push(`month: "${x[0]}"`);
+  }
+  for (const x of text.matchAll(BARE_MONTH)) {
+    if (!m.dates.some((d) => Number(d.slice(5, 7)) === MONTH_KEYS.indexOf(x[1].slice(0, 3).toLowerCase()) + 1) && !saidByClient(x[1])) errors.push(`month: "${x[0]}"`);
+  }
+  for (const x of text.matchAll(ORDINAL)) {
+    if (!m.dates.some((d) => Number(d.slice(8)) === Number(x[1])) && !saidByClient(x[0])) errors.push(`ordinal: "${x[0]}"`);
+  }
+  for (const c of clocks(text)) {
+    const at = dayBefore(text, c.index);
+    const ok = m.slots.some((s) => sameClock(s.minutes, c) && (!at
+      || (at.day ? s.day === at.day : Number(s.date.slice(5, 7)) === MONTH_KEYS.indexOf(at.month) + 1 && Number(s.date.slice(8)) === at.dayOfMonth)));
+    if (!ok) errors.push(`clock_ampm: "${c.text}"`);
+  }
+  return errors;
+}
 
 const SIGNOFF = /^(best|best regards|kind regards|warm regards|regards|thanks|thank you|many thanks|cheers|sincerely|warmly|all the best|talk soon)[,.!]*$/i;
 
@@ -74,7 +163,7 @@ function stripSignoff(text) {
 }
 
 /** Validate a model draft. Returns { ok, body, errors }. */
-function validateDraft(rawBody, purpose, { optional = [] } = {}) {
+function validateDraft(rawBody, purpose, { optional = [], mentions = null } = {}) {
   const errors = [];
   if (typeof rawBody !== 'string') return { ok: false, errors: ['body is not a string'] };
   const body = stripSignoff(rawBody.replace(/^subject:.*\n/i, ''));
@@ -98,9 +187,11 @@ function validateDraft(rawBody, purpose, { optional = [] } = {}) {
 
   const checkable = body.replace(/\{\{\s*[A-Z_]+\s*\}\}/g, ' ');
   for (const [name, re] of FORBIDDEN) {
+    if (mentions && MENTION_RULES.has(name)) continue;
     const m = checkable.match(re);
     if (m) errors.push(`${name}: "${m[0]}"`);
   }
+  if (mentions) errors.push(...checkMentions(checkable, mentions));
   // Asked "are you a bot?": the answer must actually say so.
   if (purpose === 'ai_disclosure' && !/\b(AI|artificial intelligence)\b/.test(body)) errors.push('ai_disclosure: must say plainly it is an AI');
   if (body.length < 15) errors.push('too short');
@@ -193,6 +284,13 @@ function hasExternal(ctx, r) {
   return [...r.to, ...r.cc, ...r.bcc].some((p) => !isInternal(p.address, domains));
 }
 
+// A BZB colleague Sarah is scheduling with is a client too: mail to them
+// gets the same shadow-mode review as mail to outside people.
+function hasClient(thread, r) {
+  const clients = new Set(((thread && thread.client_addresses) || []).map(lower));
+  return [...r.to, ...r.cc, ...r.bcc].some((p) => clients.has(lower(p.address)));
+}
+
 // ---------------------------------------------------------------------------
 // Internal emails to the employee (templated, never model-written)
 // ---------------------------------------------------------------------------
@@ -239,6 +337,26 @@ function vicConfirmationMail(ctx, employee, thread, offer, whenText, flags, tidT
     ]);
 }
 
+// Part of the group never answered the follow-up; the rest agreed on a time.
+function vicGroupConfirmationMail(ctx, employee, thread, offer, whenText, flags, tidToken, { agreed, silent }) {
+  const heads = (flags || []).map((f) => HEADS_UP[f]).filter(Boolean);
+  return internalMail(ctx, employee,
+    `Confirm: ${clientLabel(thread)} — ${formatSlotShort(offer.start, employee.timezone)} [S-${tidToken}]`,
+    [
+      `Hi ${employee.first_name},`,
+      '',
+      agreed.length > 1 ? `${joinNames(agreed)} can all do:` : `${joinNames(agreed)} can do:`,
+      '',
+      `    ${whenText}`,
+      `    ${thread.duration_min} minutes, ${locationPhrase(thread.location_type, thread.location_text)}`,
+      '',
+      `${joinNames(silent)} hasn't replied, even after my follow-up.`,
+      '',
+      heads.length ? `Heads-up: ${heads.join(' ')}\n` : null,
+      `Reply YES and I'll book it (everyone gets the invite from your calendar, ${joinNames(silent)} included), FOLLOW UP and I'll ask ${joinNames(silent)} once more before booking, NO and I'll offer everyone other times, or reply with a different day or time.`,
+    ]);
+}
+
 function vicReminderMail(ctx, employee, thread, offer, whenText, tidToken) {
   return internalMail(ctx, employee,
     `Reminder: confirm ${clientLabel(thread)} — ${formatSlotShort(offer.start, employee.timezone)} [S-${tidToken}]`,
@@ -279,8 +397,8 @@ function vicNoClientsMail(ctx, employee, subject) {
   return internalMail(ctx, employee,
     `Couldn't start scheduling: ${subject || '(no subject)'}`,
     [`Hi ${employee.first_name},`, '',
-     'You copied me, but I couldn\'t find anyone outside BZB on the email to schedule with.', '',
-     'Reply-all with the client on To or CC and me copied, and I\'ll take it from there.']);
+     'You copied me, but I couldn\'t find anyone on the email to schedule with besides you.', '',
+     'Reply-all with them on To or CC and me copied, and I\'ll take it from there.']);
 }
 
 function portalLink(ctx, path) {
@@ -311,7 +429,7 @@ function vicNotConnectedMail(ctx, employee, subject) {
 
 module.exports = {
   portalLink, vicPausedMail, vicNotConnectedMail, OPTIONAL_PLACEHOLDERS,
-  PLACEHOLDERS, TEMPLATES, FORBIDDEN, HEADS_UP, stripSignoff, validateDraft, fillPlaceholders, renderClientEmail,
-  signature, quoteHtml, clientRecipients, checkRecipients, hasExternal, clientLabel,
-  vicConfirmationMail, vicReminderMail, vicClarifyMail, vicNoticeMail, vicStalledMail, vicNoClientsMail,
+  PLACEHOLDERS, TEMPLATES, FORBIDDEN, HEADS_UP, stripSignoff, validateDraft, checkMentions, fillPlaceholders, renderClientEmail,
+  signature, quoteHtml, clientRecipients, checkRecipients, hasExternal, hasClient, clientLabel,
+  vicConfirmationMail, vicGroupConfirmationMail, vicReminderMail, vicClarifyMail, vicNoticeMail, vicStalledMail, vicNoClientsMail,
 };

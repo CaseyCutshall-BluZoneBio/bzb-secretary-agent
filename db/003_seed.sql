@@ -23,7 +23,7 @@ INSERT INTO settings (key, value, note) VALUES
   ('sarah_name',         '"Sarah Johnson"',                'First line of the signature.'),
   ('signature_title',    '"Scheduling Assistant to Vic Suarez (AI)"', 'Second line of the signature — the AI disclosure.'),
   ('company_name',       '"Blu Zone Bio"',                 'Third line of the signature.'),
-  ('internal_domains',   '["bluzonebio.com"]',             'Addresses on these domains are internal (never treated as clients).'),
+  ('internal_domains',   '["bluzonebio.com"]',             'Addresses on these domains are internal (BZB staff). Sarah schedules with them like anyone else on To/CC.'),
   ('alert_address',      '"FILL IN: casey@bluzonebio.com"', 'Gets error alerts and shadow-mode review emails.'),
 
   -- endpoints -----------------------------------------------------------------

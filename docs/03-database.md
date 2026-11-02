@@ -44,7 +44,7 @@ for t in /opt/bzb-ai/sarah/db/tests/*.sql; do
 done
 ```
 
-Expect 84 PASS / 0 FAIL and 50 PASS / 0 FAIL. Each test file runs in one transaction and rolls back, so it never changes your data. Run them right after installing or upgrading, before real traffic: they count rows such as queued outbox items, so on a busy system they can report false FAILs.
+Every file should report 0 FAIL. Each test file runs in one transaction and rolls back, so it never changes your data. Run them right after installing or upgrading, before real traffic: they count rows such as queued outbox items, so on a busy system they can report false FAILs.
 
 ### Upgrading an existing install
 
@@ -55,7 +55,7 @@ docker compose exec -T db psql -U sched_agent -d sched_agent -c "SELECT version 
 docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/004_portal.sql
 ```
 
-`005_reschedule.sql` (rescheduling) is also idempotent: `docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/005_reschedule.sql`.
+`006_thread_history.sql` (the conversation for the model) and `005_reschedule.sql` (rescheduling) are also idempotent. Apply them in order: `docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/005_reschedule.sql`, then the same with `006_thread_history.sql` and `007_group_meetings.sql` (group meetings: who must agree, and what each person said).
 
 `004_portal.sql` is idempotent (safe to run twice). It leaves existing rows working exactly as before: Vic keeps `calendar_auth = 'app'`. It also revokes `PUBLIC`'s default `EXECUTE` on every `sched` function. n8n connects as the owner, `sched_agent`, so it's unaffected; the portal role can only run `portal_*`.
 
@@ -83,7 +83,7 @@ INSERT INTO sched.settings (key, value, note) VALUES ('max_horizon_days', '90', 
 | `processing_start_at` | install time | Inbound mail older than this is logged and ignored. Reset it the first time you leave `off` |
 | `sarah_upn` | `sarah.johnson@bluzonebio.com` | The only sender |
 | `sarah_name`, `signature_title`, `company_name` | Sarah Johnson · Scheduling Assistant to Vic Suarez (AI) · Blu Zone Bio | Signature lines. The second line is the AI disclosure; keep it |
-| `internal_domains` | `["bluzonebio.com"]` | Addresses here are never treated as clients |
+| `internal_domains` | `["bluzonebio.com"]` | Addresses here are BZB staff. Sarah schedules with them like anyone else on To/CC |
 | `alert_address` | — | Errors and shadow-mode review emails go here (you) |
 | `graph_base_url` | `https://graph.microsoft.com/v1.0` | |
 | `litellm_url` | `http://litellm:4000/v1/chat/completions` | As n8n reaches LiteLLM on the compose network |
@@ -92,6 +92,9 @@ INSERT INTO sched.settings (key, value, note) VALUES ('max_horizon_days', '90', 
 | `llm_max_tokens` | 4096 (unset) | Output budget per model call. Reasoning models spend part of it thinking before answering; if classification fails with "used its whole token budget", raise it |
 | `llm_extra_body` | unset | A JSON object merged into every LiteLLM request, for backend-specific switches, e.g. `{"chat_template_kwargs": {"enable_thinking": false}}` to stop a Qwen model thinking (if your backend supports it) |
 | `llm_drafting` | `true` | `false` = client emails always use the fixed templates (no model wording) |
+| `llm_choose_times` | `true` (unset) | The model chooses which legal times to offer, going by what people said. `false` = code's default picks only |
+| `llm_choice_extra_body` | unset | Replaces `llm_extra_body` for the time choice only, e.g. `{"chat_template_kwargs": {"enable_thinking": true}}` to let the model think on this step alone. Slower |
+| `llm_free_dates` | `true` (unset) | The model may name days and times in its wording, checked against the real options. `false` = the old strict rule: placeholders only |
 | `require_internal_auth` | `true` | Only act on employee emails stamped `AuthAs: Internal`. Read `docs/05-rollout.md` §2 before changing |
 | `n8n_base_url` | — | Tailnet URL for review links, e.g. `http://bzb-ai-1:5678` |
 | `max_rounds` | 4 | Offer rounds before handing to Vic |

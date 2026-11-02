@@ -103,10 +103,35 @@ function askedTimeText(startIso, zone) {
   return `${s.toFormat('cccc, LLLL d')} at ${s.toFormat('h:mm a')}`;
 }
 
+// What a draft may say about days and times: the real open options, and what
+// the client asked about (which may be taken). draft.checkMentions holds every
+// date and time the model writes to this list.
+//   open / asked   ISO start times
+//   askedDates     YYYY-MM-DD days the client asked about, with no time attached
+//   askedDays      'thu', … for "Thursdays"
+function mentionable({ open = [], asked = [], askedDates = [], askedDays = [] }, zone, clientText = '') {
+  const slot = (iso) => {
+    const s = dt(iso, zone);
+    return { date: s.toISODate(), day: s.toFormat('ccc').toLowerCase(), minutes: s.hour * 60 + s.minute };
+  };
+  const slots = [...open, ...asked].map(slot);
+  const windowDays = [...askedDates.map((d) => DateTime.fromISO(d).toFormat('ccc').toLowerCase()), ...askedDays];
+  return {
+    slots,
+    dates: [...new Set([...slots.map((s) => s.date), ...askedDates])],
+    days: [...new Set([...slots.map((s) => s.day), ...windowDays])],
+    window_days: [...new Set(windowDays)],
+    client_text: String(clientText || '').toLowerCase(),
+    open_text: open.map((iso) => askedTimeText(iso, zone)),
+    asked_text: [...asked.map((iso) => askedTimeText(iso, zone)),
+                 ...askedDates.map((d) => DateTime.fromISO(d).toFormat('cccc, LLLL d'))],
+  };
+}
+
 function locationPhrase(locationType, locationText) {
   if (locationType === 'in_person') return locationText ? `in person at ${locationText}` : 'in person';
   if (locationType === 'phone') return 'a phone call';
   return 'a Teams call';
 }
 
-module.exports = { dt, formatSpoken, formatSlot, formatSlotList, formatSlotOptions, formatSlotShort, calendarTable, offsetLabel, locationPhrase, askedWindowText, askedTimeText };
+module.exports = { dt, formatSpoken, formatSlot, formatSlotList, formatSlotOptions, formatSlotShort, calendarTable, offsetLabel, locationPhrase, askedWindowText, askedTimeText, mentionable };

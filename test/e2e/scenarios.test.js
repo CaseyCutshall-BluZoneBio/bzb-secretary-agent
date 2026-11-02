@@ -415,6 +415,36 @@ test('reschedule: after booking, "can we push it?" → new times → pick → YE
 });
 
 // -----------------------------------------------------------------------------
+test('the model chooses among the legal times, and its next draft sees the thread', async () => {
+  const C = 'ines@choice.example';
+  let lastOptions = [];
+  S.llmOverride = (schema, user) => {
+    if (schema !== 'choice') return undefined;
+    lastOptions = user.split('Emails so far')[0].match(/^\d+\. .+$/gm);
+    const n = Math.max(1, lastOptions.length);
+    return JSON.stringify({ reason: 'Ines is free later on', picks: [n - 8, n - 4, n].filter((x) => x > 0) });
+  };
+  mock.deliver({ from: VIC, fromName: 'Vic Suarez', to: [C], cc: [SARAH], authAs: 'Internal',
+                 subject: 'Intro: Ines / Vic', body: 'Ines, Sarah will find us a time. She prefers the later days.' });
+  const intro = await waitFor('intro with the chosen times', () => sentTo(C)[0]);
+  const chosen = lastOptions[lastOptions.length - 1].replace(/^\d+\. /, '').replace(/ E[DS]T$/, '');
+  assert.ok(bodyOf(intro).includes(chosen), `${chosen} should be offered`);
+  assert.equal((bodyOf(intro).match(/• /g) || []).length, 3);
+  await waitFor('3 holds for the chosen times', () => holds().filter((h) => /Ines|ines/.test(h.subject)).length === 3);
+  S.llmOverride = null;
+  const thread = await db.query("SELECT id FROM sched.threads WHERE client_addresses @> ARRAY[$1]::text[]", [C]);
+  const raw = await db.query("SELECT classification FROM sched.messages WHERE thread_id = $1 AND direction = 'in'", [thread.rows[0].id]);
+  assert.ok(JSON.stringify(raw.rows).includes('time choice: Ines is free later on'));
+  // A second round: the draft and the choice both see Sarah's first email.
+  mock.deliver({ from: C, to: [SARAH], authAs: 'Anonymous', subject: 'RE: Intro: Ines / Vic', body: 'None of those work for me.',
+                 conversationId: intro.conversationId });
+  await waitFor('a second round', () => sentTo(C).length >= 2);
+  const call = [...S.llmCalls].reverse().find((c) => c.schema === 'draft');
+  assert.match(call.user, /earlier_emails/);
+  assert.match(call.user, /"from": "Sarah"/);
+  await db.query("UPDATE sched.threads SET state = 'CLOSED', closed_reason = 'test' WHERE id = $1", [thread.rows[0].id]);
+});
+
 test('a failing workflow triggers the error workflow, which emails Casey', async () => {
   S.failNext['GET /mailFolders/inbox/messages/delta$'] = 500;
   const alert = await waitFor('failure alert to Casey', () =>

@@ -84,6 +84,8 @@ function createMock({ sarah = 'sarah.johnson@bluzonebio.com', appCalendars = ['v
       out = { decision: /\byes\b/.test(email) ? 'yes' : /\bno\b/.test(email) ? 'no' : 'unclear', proposed_times: [], constraints: none };
     } else if (schema === 'employee_in_thread') {
       out = { intent: /take it from here|i've got it/.test(email) ? 'take_over' : 'other' };
+    } else if (schema === 'choice') {
+      out = { reason: 'nothing stated', picks: [] };
     } else if (schema === 'draft') {
       const task = user.split('\n')[0];
       const names = (user.match(/"recipients_first_names": \[\s*"([^"]+)"/) || [])[1] || 'there';

@@ -1,6 +1,8 @@
 'use strict';
-// Slot selection. Pure code, no model involvement: which times are free, which
-// are "clean" (not back-to-back), and which three go in front of the client.
+// Slot selection. Pure code: which times are free, which are "clean" (not
+// back-to-back), and which three go in front of the client by default. The
+// model may swap those three for others from the same legal pool (shortlist),
+// but it can never add a time.
 //
 // Hard rules (a slot is never offered if it breaks one):
 //   * no overlap with a busy/tentative/OOF event or another thread's live offer
@@ -275,13 +277,14 @@ const distinctDays = (list) => new Set(list.map((c) => c.day)).size;
  *   2. widen the window by widenDays and try again
  *   3. offer fewer (but at least 2) clean slots
  *   4. only then include back-to-back slots, ranked last
- * Returns { slots: [...with option_no], note, window }. note 'beyond_horizon':
- * the requested window starts past maxHorizonDays, so nothing is offered.
+ * Returns { slots: [...with option_no], pool, note, window }. pool: every slot
+ * equally acceptable to the ones chosen. note 'beyond_horizon': the requested
+ * window starts past maxHorizonDays, so nothing is offered.
  */
 function pickSlots(p) {
   const n = p.count || p.employee.offers_per_round || 3;
   const window = searchWindow(p);
-  if (window.beyondHorizon) return { slots: [], note: 'beyond_horizon', considered: 0, window };
+  if (window.beyondHorizon) return { slots: [], pool: [], note: 'beyond_horizon', considered: 0, window };
   const all = candidates(p);
   const pass1 = all.filter((c) => c.pass === 1);
   const clean1 = pass1.filter((c) => c.clean);
@@ -289,17 +292,19 @@ function pickSlots(p) {
 
   let chosen;
   let note;
+  let pool;
   if (distinctDays(clean1) >= n) {
-    chosen = pickSpread(clean1, n); note = 'clean';
+    pool = clean1; chosen = pickSpread(clean1, n); note = 'clean';
   } else if (distinctDays(cleanAll) >= n) {
-    chosen = pickSpread(cleanAll, n); note = 'clean_widened';
+    pool = cleanAll; chosen = pickSpread(cleanAll, n); note = 'clean_widened';
   } else if (cleanAll.length >= 2) {
-    chosen = pickSpread(cleanAll, n); note = 'fewer_clean';
+    pool = cleanAll; chosen = pickSpread(cleanAll, n); note = 'fewer_clean';
   } else {
     const clean = pickSpread(cleanAll, n);
     const rest = all.filter((c) => !c.clean && !clean.some((x) => overlaps(x, c)));
     chosen = [...clean, ...pickSpread(rest, n - clean.length)];
     note = chosen.length ? 'includes_back_to_back' : 'none';
+    pool = chosen;
   }
 
   // Clean slots first (chronological), back-to-back ones last.
@@ -307,7 +312,27 @@ function pickSlots(p) {
   const slots = chosen.map((c, i) => ({
     option_no: i + 1, start: c.start, end: c.end, score: c.score, flags: c.flags,
   }));
-  return { slots, note, considered: all.length, window };
+  return { slots, pool, note, considered: all.length, window };
+}
+
+/**
+ * Trim the pool to a list the model can read: up to perDay times per day,
+ * evenly spread through the day, plus the default slots. Chronological.
+ */
+function shortlist(pool, slots, { perDay = 4, max = 30 } = {}) {
+  const byDay = {};
+  for (const c of pool) (byDay[c.day] = byDay[c.day] || []).push(c);
+  const kept = new Map(slots.map((s) => [s.start, s]));
+  for (const day of Object.keys(byDay).sort()) {
+    const cs = byDay[day].sort((a, b) => a.startMs - b.startMs);
+    const take = Math.min(perDay, cs.length);
+    for (let i = 0; i < take && kept.size < max; i++) {
+      const c = cs[Math.floor((i * cs.length) / take)];
+      if (!kept.has(c.start)) kept.set(c.start, c);
+    }
+  }
+  return [...kept.values()].sort((a, b) => a.start.localeCompare(b.start))
+    .map(({ start, end, score, flags }) => ({ start, end, score, flags }));
 }
 
 /**
@@ -340,5 +365,5 @@ function checkSlot(p, startIso, endIso, mode = 'propose') {
 
 module.exports = {
   HOLD_CATEGORY, DAY_KEYS, parseGraphTime, busyFromEvents, offersToBlocks,
-  searchWindow, candidates, pickSlots, checkSlot, evaluate, prepare,
+  searchWindow, candidates, pickSlots, shortlist, checkSlot, evaluate, prepare,
 };

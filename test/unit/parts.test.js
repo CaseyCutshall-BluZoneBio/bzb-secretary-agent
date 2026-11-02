@@ -119,6 +119,11 @@ test('routing', () => {
   assert.equal(route(clientCtx('hi', { thread: { state: 'NEEDS_VIC', escalation_reason: 'x' } })).disposition, 'ignored_thread_escalated');
   assert.equal(route(ctx({ message: message({ from_address: 'stranger@x.com', headers: {} }) })).disposition, 'ignored_no_thread');
   assert.equal(route(ctx({ message: message({ from_address: 'brad@bluzonebio.com' }) })).disposition, 'ignored_internal_other');
+  // A colleague Sarah is scheduling with is a client; one who isn't stays ignored.
+  const brad = { from_address: 'brad@bluzonebio.com', from_name: 'Brad Lee', headers: { auth_as: 'Internal' } };
+  const bradThread = { client_addresses: ['brad@bluzonebio.com'], client_names: {} };
+  assert.equal(route(clientCtx('Tuesday works', { thread: bradThread, ctx: { message: message({ ...brad, conversation_id: 'CONV-1' }) } })).kind, 'client_reply');
+  assert.equal(route(clientCtx('fyi', { ctx: { message: message(brad) } })).disposition, 'ignored_internal_other');
   const noAuth = ctx({ message: message({ headers: {} }) });
   assert.equal(route(noAuth).disposition, 'ignored_unauthenticated');
   noAuth.settings.require_internal_auth = false;
@@ -340,3 +345,50 @@ test('client emails end with a sign-off before the signature', () => {
     /\n\nBest,\nSarah Johnson\nScheduling Assistant to Vic Suarez \(AI\)\nBlu Zone Bio$/);
   assert.match(D.renderClientEmail(ctx(), 'Great, {{TIME}} it is.', { timeText: 'x' }, null, 'America/New_York', emp, 'ack').body_text, /\n\nThanks,\nSarah Johnson\n/);
 });
+
+// ---------------------------------------------------------------------------
+// checkMentions: what she may say about days and times
+// ---------------------------------------------------------------------------
+{
+  const Dr = require('../../src/draft');
+  const Fm = require('../../src/format');
+  // Thu Oct 8 at 2:00 PM and Fri Oct 9 at 10:30 AM (Eastern) are open; the client asked about Mon Oct 12.
+  const m = (said = '') => Fm.mentionable({ open: ['2026-10-08T18:00:00Z', '2026-10-09T14:30:00Z'], askedDates: ['2026-10-12'] }, 'America/New_York', said);
+  const ok = (text, said) => assert.deepEqual(Dr.checkMentions(text, m(said)), [], text);
+  const bad = (text, said) => assert.ok(Dr.checkMentions(text, m(said)).length > 0, text);
+
+  test('mentions: true statements pass', () => {
+    ok('Thursday at 2pm looks good.');
+    ok('Thursday at 2:00 PM looks good.');
+    ok('Friday morning is open, and Thursday afternoon too.');
+    ok('October 8 at 2pm works, or the 9th.');
+    ok('Thursday, October 8 at 2:00 PM is open.');
+    ok('Monday is booked up, sorry.');
+    ok('Friday at 10:30 is open.');
+    ok('A 30-minute call in October, at 2pm.');
+  });
+  test('mentions: false statements fail', () => {
+    bad('Saturday works.');
+    bad('Tuesday works.');
+    bad('Friday at 2pm works.');
+    bad('Thursday at 10:30 works.');
+    bad('Friday afternoon is open.');
+    bad('Thursday morning is open.');
+    bad('The 15th works.');
+    bad('October 15 works.');
+    bad('November is open.');
+    bad('Let us say 4pm.');
+    bad('How about at 4?');
+    bad('Noon is fine.');
+    bad('October 8 at 10:30am is open.');
+  });
+  test('mentions: a day the client named may be repeated, but a clock time may not', () => {
+    bad('Safe travels on Tuesday.');
+    ok('Safe travels on Tuesday.', 'I fly out Tuesday');
+    bad('Tuesday at 4pm is fine.', 'Tuesday at 4pm?');
+  });
+  test('mentions: not fooled by numbers that are not times', () => {
+    ok('It will take at 30 minutes or so.');
+    ok('See you at 30 people or fewer.');
+  });
+}

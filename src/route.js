@@ -95,8 +95,10 @@ function route(ctx) {
   }
 
   if (isInternal(from, domains)) {
-    // A non-enrolled colleague (Brad, Josh...). Never actionable in v1.
-    return { kind: 'ignore', disposition: 'ignored_internal_other', attach: !!thread };
+    // A non-enrolled colleague (Brad, Josh...) only counts when Sarah is
+    // scheduling with them; otherwise their notes are never actionable.
+    const isClient = thread && (thread.client_addresses || []).map(lower).includes(from);
+    if (!isClient) return { kind: 'ignore', disposition: 'ignored_internal_other', attach: !!thread };
   }
 
   if (!thread) return { kind: 'ignore', disposition: 'ignored_no_thread' };

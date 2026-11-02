@@ -1,6 +1,6 @@
 # Sarah — how to use her
 
-Sarah is your AI scheduling assistant. She finds a time with people outside BZB and books it on your calendar. She writes from her own address and never from yours.
+Sarah is your AI scheduling assistant. She finds a time with the people on your email (clients or BZB colleagues) and books it on your calendar. Everyone on To or CC is in the meeting, unless you say who it's with ("Sarah, find a time for me and Dana"); then only those people are, and the rest stay copied on the emails. She writes from her own address and never from yours.
 
 ## Set up (once, two minutes)
 
@@ -40,6 +40,16 @@ Reply:
 
 If it starts or ends right next to another meeting, she says so in that email.
 
+## Meetings with several people
+
+When more than one person is in the meeting, Sarah needs a time that works for **all** of them, and she only asks you to confirm once everyone has agreed. As answers come in, she thanks each person, tells the others which times are still possible, and drops any time someone can't make. If someone suggests a different time and you're free, she asks the rest whether it works. If nothing works for everyone, she offers new times.
+
+If someone still hasn't answered after her follow-up, she emails you with who agreed to what and who's silent. Reply:
+
+- **YES** to book it anyway. Everyone gets the invite, including whoever didn't reply.
+- **FOLLOW UP** and she'll ask them once more about that time before booking.
+- **NO**, or a different time, as usual.
+
 ## Take a thread back
 
 Reply in the client thread with "I'll take it from here", and Sarah stops.
@@ -72,5 +82,6 @@ You'll get one email, **"Action needed: reconnect your calendar to Sarah"**. Cli
 - If a client needs a second round, options continue numbering (4, 5, 6…), so there's never confusion about which "option 2" they meant.
 - Her emails are signed "Scheduling Assistant to *your name* (AI)", so clients know she's an assistant.
 - **My threads** in the portal lists what she's working on for you.
+- She reads the whole conversation, and picks times to suit what people said ("mornings are easier"). She only ever offers times that are free on your calendar.
 - If a client asks whether she's an AI, she says so honestly and carries on scheduling (or offers to loop you in).
 - She answers simple questions herself: how long the meeting is, whether it's Teams, phone or in person, where it is, and whether they can bring a colleague (they copy the colleague on the email). Anything else comes to you.

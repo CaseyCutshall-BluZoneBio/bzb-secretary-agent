@@ -7,10 +7,12 @@ const { setting } = require('./util');
 // max_tokens thinking before it answers, so the budget is a setting
 // (llm_max_tokens). llm_extra_body (a JSON object) is merged into every
 // request for backend-specific switches, e.g.
-// {"chat_template_kwargs": {"enable_thinking": false}}.
-function buildRequest(ctx, prompt, { temperature = 0, maxTokens = 1500 } = {}) {
+// {"chat_template_kwargs": {"enable_thinking": false}}. A step can name its own
+// setting (extraSetting) that overrides it, so thinking can stay off everywhere
+// except choosing times.
+function buildRequest(ctx, prompt, { temperature = 0, maxTokens = 1500, extraSetting = null } = {}) {
   const budget = Number(setting(ctx, 'llm_max_tokens', 0));
-  const extra = setting(ctx, 'llm_extra_body', null);
+  const extra = (extraSetting && setting(ctx, extraSetting, null)) || setting(ctx, 'llm_extra_body', null);
   const body = {
     ...(extra && typeof extra === 'object' && !Array.isArray(extra) ? extra : {}),
     model: setting(ctx, 'llm_model', 'qwen'),

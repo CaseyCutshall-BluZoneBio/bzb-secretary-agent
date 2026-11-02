@@ -1,14 +1,15 @@
 'use strict';
-// The processor's brain, split into the four steps the n8n workflow runs:
+// The processor's brain, split into the steps the n8n workflow runs:
 //
 //   start(ctx)            route the event; build the classification request
 //   interpret(S, llmResp) turn the classification into an action
 //   act(S, calendarResp)  compute slots / checks; build the plan (+ email to draft)
+//   choose(S, llmResp)    when act() asked: use the model's pick of times, if legal
 //   finish(S, llmResp)    validate the drafted email (or use the template); final plan
 //
-// S is plain JSON so it can pass between n8n Code nodes. Every fact in an
-// outgoing email (times, recipients, what happens next) is decided here in
-// code; the model only classifies and writes words around placeholders.
+// S is plain JSON so it can pass between n8n Code nodes. Recipients, actions and
+// every legal time are decided here in code; the model classifies, chooses among
+// times code has already checked, and writes words that code then verifies.
 const { DateTime } = require('./luxon');
 const U = require('./util');
 const F = require('./format');
@@ -16,9 +17,10 @@ const SL = require('./slots');
 const P = require('./prompts');
 const L = require('./llm');
 const D = require('./draft');
+const G = require('./group');
 const { route } = require('./route');
 
-const CALENDAR_ACTIONS = new Set(['start', 'propose', 'accept_offer', 'counter_times', 'book']);
+const CALENDAR_ACTIONS = new Set(['start', 'propose', 'accept_offer', 'counter_times', 'book', 'group_answer']);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
 const ZONE_ALIASES = {
@@ -108,6 +110,30 @@ function singleFirstName(n) {
   if (!/^[\p{L}][\p{L}'-]{1,29}$/u.test(s)) return null;
   if (s === s.toUpperCase() || ['slots', 'time', 'asked', 'there', 'sarah', 'null', 'none'].includes(s.toLowerCase())) return null;
   return s;
+}
+
+// The recipients the employee named as the people the meeting is with. A
+// name matches a display name word ("Dana" ~ "Dana Whitfield") or a part of
+// the address ("dana" ~ dana.whitfield@acme-bio.com). Names that match nobody
+// are dropped; none matching means nobody was singled out.
+function namedRecipients(recips, displayNames, meetingWith, emp) {
+  if (!Array.isArray(meetingWith)) return [];
+  const skip = new Set(['sarah', 'me', 'us', 'i', U.lower(emp.first_name), U.lower(emp.display_name)]);
+  const words = (s) => U.lower(s).split(/[^\p{L}'-]+/u).filter(Boolean);
+  const out = [];
+  for (const raw of meetingWith) {
+    const name = words(U.sanitizeName(raw));
+    if (!name.length || skip.has(name.join(' ')) || skip.has(name[0])) continue;
+    const hits = recips.filter((a) => {
+      const display = words(displayNames[a]);
+      const local = words(a.split('@')[0].replace(/[._]/g, ' '));
+      const pool = display.length ? display : local;
+      return name.every((w) => pool.includes(w));
+    });
+    // "Dan" when both Dan Lee and Dan Ortiz are on it: ambiguous, take both.
+    for (const a of hits) if (!out.includes(a)) out.push(a);
+  }
+  return out;
 }
 
 function cleanTopic(t) {
@@ -212,7 +238,7 @@ function calendarSpans(S) {
 
   if (a.type === 'start') addWindow(a.create.constraints);
   if (a.type === 'propose') addWindow(proposeConstraints(S, a), proposeWindowStart(S, a));
-  if (a.type === 'accept_offer') addWindow(proposeConstraints(S, {})); // if taken → new round
+  if (a.type === 'accept_offer' || a.type === 'group_answer') addWindow(proposeConstraints(S, {})); // if taken → new round
   if (a.type === 'counter_times') {
     for (const t of a.times) {
       const day = DateTime.fromISO(t.date, { zone });
@@ -317,7 +343,8 @@ function start(ctx) {
   } else if (r.kind === 'employee_confirmation') {
     const offer = threadOffers(ctx).find((o) => o.id === t.accepted_offer_id);
     prompt = P.classifyConfirmationPrompt({ employeeFirst: emp.first_name, zone, table,
-      whenText: offer ? F.formatSlot(offer.start, offer.end, zone) : 'the proposed time', body: msg.body_text });
+      whenText: offer ? F.formatSlot(offer.start, offer.end, zone) : 'the proposed time', body: msg.body_text,
+      someoneSilent: G.isGroup(t) && G.pending(t, t.responses).length > 0 });
   } else if (r.kind === 'employee_in_thread') {
     prompt = P.classifyEmployeeInThreadPrompt({ employeeFirst: emp.first_name, body: msg.body_text });
   }
@@ -366,12 +393,15 @@ function decideTrigger(S, parsed) {
   if (!cls.is_scheduling_request) return { type: 'ignore', disposition: 'ignored_not_scheduling' };
 
   const sarah = U.lower(U.setting(ctx, 'sarah_upn', ''));
-  const domains = U.setting(ctx, 'internal_domains', []);
   const recips = U.unique([...(msg.to_addresses || []), ...(msg.cc_addresses || [])].map(U.lower))
-    .filter((a) => a !== sarah && a !== U.lower(emp.upn) && a !== U.employeeAddress(emp));
-  const clients = recips.filter((a) => !U.isInternal(a, domains));
-  const internal = recips.filter((a) => U.isInternal(a, domains));
-  if (!clients.length) return { type: 'notify_no_clients' };
+    .filter((a) => a && a !== sarah && a !== U.lower(emp.upn) && a !== U.employeeAddress(emp));
+  if (!recips.length) return { type: 'notify_no_clients' };
+  // Everyone on To/CC is in the meeting, at BZB or not, unless the employee
+  // names who it's with ("find a time for me and Dana"). Then only the named
+  // people are; the rest stay cc'd on the emails but aren't invited.
+  const named = namedRecipients(recips, msg.recipient_names || {}, cls.meeting_with, emp);
+  const clients = named.length ? named : recips;
+  const internal = recips.filter((a) => !clients.includes(a));
 
   const names = {};
   for (const a of clients) names[a] = U.sanitizeName((msg.recipient_names || {})[a]);
@@ -392,6 +422,8 @@ function decideTrigger(S, parsed) {
       client_addresses: clients,
       client_names: names,
       other_internal: internal,
+      // Each of them must agree to a time (group meetings: src/group.js).
+      responders: clients,
       duration_min: duration,
       location_type: location,
       location_text: cls.location_detail || (location === 'in_person' ? emp.office_address : null),
@@ -406,10 +438,12 @@ function newPeople(S) {
   const msg = ctx.message;
   const t = ctx.thread;
   const sarah = U.lower(U.setting(ctx, 'sarah_upn', ''));
-  const domains = U.setting(ctx, 'internal_domains', []);
-  const known = new Set((t.client_addresses || []).map(U.lower));
+  // People already on the thread, including those the employee left out of the meeting.
+  const known = new Set([...(t.client_addresses || []), ...(t.other_internal || [])].map(U.lower));
+  const emp = employeeOf(S);
+  const self = emp ? [U.lower(emp.upn), U.lower(U.employeeAddress(emp))] : [];
   const add = U.unique([msg.from_address, ...(msg.to_addresses || []), ...(msg.cc_addresses || [])].map(U.lower))
-    .filter((a) => a && a !== sarah && !U.isInternal(a, domains) && !known.has(a));
+    .filter((a) => a && a !== sarah && !self.includes(a) && !known.has(a));
   return add;
 }
 
@@ -427,7 +461,8 @@ function decideClient(S, parsed) {
   let learned = false;
   // Display name first; else the first name they sign with ("Thanks, Dana").
   const fromName = U.sanitizeName(ctx.message.from_name) || singleFirstName(cls && cls.sender_first_name);
-  if (fromName && !names[from] && !U.isInternal(from, U.setting(ctx, 'internal_domains', []))) {
+  const fromClient = (t.client_addresses || []).map(U.lower).includes(from) || add.includes(from);
+  if (fromName && !names[from] && fromClient) {
     names[from] = fromName;
     learned = true;
   }
@@ -469,6 +504,14 @@ function decideClient(S, parsed) {
     return { type: 'escalate', reason: why('Client wrote after the meeting was booked'), handoff: true, question: cls.question };
   }
   if (t.state === 'AWAITING_VIC' || t.state === 'CLIENT_ACCEPTED') {
+    // A group member who hadn't answered says the time works: note it for Vic's YES.
+    if (intent === 'accept' && G.isGroup(t)) {
+      const offer = acceptedOfferOf(ctx);
+      const who = G.voters(t, from, cls.answering_for, names);
+      if (offer && who.length && acceptedOptions(cls).includes(offer.option_no)) {
+        S.setResponses = G.record(t.responses, who, [offer.start], ctx.now);
+      }
+    }
     if (intent === 'thanks' || intent === 'accept' || intent === 'delegate') return ack;
     return { type: 'escalate', reason: why('Client wrote again while I was waiting on your confirmation'),
              handoff: intent === 'question', question: cls.question };
@@ -478,6 +521,10 @@ function decideClient(S, parsed) {
   const today = DateTime.fromISO(ctx.now, { setZone: true }).setZone(emp.timezone).toISODate();
   const times = sanitizeTimes(cls.proposed_times);
   const constraints = sanitizeConstraints(cls.constraints, today);
+  if (G.isGroup(t) && (intent === 'accept' || (intent === 'counter' && times.length))) {
+    const g = decideGroupAnswer(S, cls, times, constraints, from, names);
+    if (g) return g;
+  }
   switch (intent) {
     case 'accept': {
       const offer = threadOffers(ctx).find((o) => o.status === 'offered' && o.option_no === cls.accepted_option);
@@ -521,6 +568,31 @@ function decideClient(S, parsed) {
   }
 }
 
+// The option numbers a reply accepts ("1 or 3 works" → [1, 3]).
+function acceptedOptions(cls) {
+  const list = Array.isArray(cls.accepted_options) ? cls.accepted_options : [];
+  return U.unique([...list, cls.accepted_option].filter((n) => Number.isInteger(n)));
+}
+
+const acceptedOfferOf = (ctx) => threadOffers(ctx).find((o) => o.id === (ctx.thread || {}).accepted_offer_id) || null;
+
+// A group member picks options or suggests a time. null → handle it as in a
+// one-person thread (e.g. an option from an earlier email).
+function decideGroupAnswer(S, cls, times, constraints, from, names) {
+  const t = S.ctx.thread;
+  const who = G.voters(t, from, cls.answering_for, names);
+  if (!who.length) {
+    return { type: 'escalate', reason: `${from} replied to the group, but I couldn't tell whose answer it was`, handoff: false };
+  }
+  if (cls.intent === 'counter' || !acceptedOptions(cls).length) {
+    if (cls.other_timezone && !sameZone(cls.other_timezone, employeeOf(S).timezone)) return null;
+    return times.length ? { type: 'counter_times', times, constraints, voters: who } : null;
+  }
+  const open = threadOffers(S.ctx).filter((o) => o.status === 'offered' && acceptedOptions(cls).includes(o.option_no));
+  if (!open.length) return null;
+  return { type: 'group_answer', voters: who, starts: open.map((o) => o.start) };
+}
+
 function decideConfirmation(S, parsed) {
   const ctx = S.ctx;
   const t = ctx.thread;
@@ -535,6 +607,11 @@ function decideConfirmation(S, parsed) {
   switch (cls.decision) {
     case 'yes':
       return { type: 'book' };
+    case 'nudge':
+      // "Chase Priya": only when someone in the group hasn't answered.
+      if (G.isGroup(t) && G.pending(t, t.responses).length) return { type: 'nudge' };
+      if (!t.vic_clarify_asked) return { type: 'clarify' };
+      return { type: 'escalate', reason: "I couldn't understand your reply to the confirmation request", handoff: false };
     case 'no':
       return { type: 'propose', reason: 'employee_declined', decline_offer: t.accepted_offer_id };
     case 'alternative': {
@@ -580,19 +657,25 @@ function act(S, calResp) {
     }
   }
   if (S.addClients) Object.assign(S.plan.thread.set, S.addClients);
+  if (S.setResponses) S.plan.thread.set.responses = S.setResponses;
 
   const a = S.action;
   const handlers = { ignore: doIgnore, start: doStart, propose: doPropose, accept_offer: doAcceptOffer,
                      counter_times: doCounterTimes, book: doBook, escalate: doEscalate, close: doClose,
-                     stall: doStall, remind: doRemind, clarify: doClarify, notify_no_clients: doNoClients, ai_reply: doAiReply, logistics_reply: doLogisticsReply };
+                     stall: doStall, remind: doRemind, clarify: doClarify, notify_no_clients: doNoClients, ai_reply: doAiReply, logistics_reply: doLogisticsReply,
+                     group_answer: doGroupAnswer, nudge: doNudge };
   const h = handlers[a.type];
   if (!h) throw new Error(`unknown action ${a.type}`);
   h(S, a, busy);
 
+  requestDraft(S);
+  return S;
+}
+
+function requestDraft(S) {
   if (S.email && U.setting(S.ctx, 'llm_drafting', true) !== false) {
     S.llm = L.buildRequest(S.ctx, P.draftPrompt(S.email.facts), { temperature: 0.4, maxTokens: 4096 });
   }
-  return S;
 }
 
 // The broker's answer when the employee's Microsoft sign-in is expired or revoked.
@@ -641,6 +724,23 @@ function alertMail(ctx, subject, body) {
   };
 }
 
+// The emails the client has already seen (load_context filters them), as
+// { from, text }. First names only: display names come from the client.
+function conversation(S) {
+  const ctx = S.ctx;
+  const t = threadView(S);
+  const emp = employeeOf(S);
+  const sarah = U.lower(U.setting(ctx, 'sarah_upn', ''));
+  const who = (a) => {
+    const addr = U.lower(a);
+    if (addr === sarah) return 'Sarah';
+    if (addr === U.lower(emp.upn) || addr === U.employeeAddress(emp)) return emp.first_name;
+    const n = U.firstName((t.client_names || {})[addr], addr);
+    return n === 'there' ? 'Client' : n;
+  };
+  return (ctx.history || []).filter((h) => h.body).map((h) => ({ from: who(h.from_address), text: String(h.body).slice(0, 800) }));
+}
+
 function facts(S, purpose, extra = {}) {
   const t = threadView(S);
   const emp = employeeOf(S);
@@ -661,8 +761,21 @@ function facts(S, purpose, extra = {}) {
     location_type: t.location_type,
     bcc: !!emp.bcc_after_intro,
     client_last_message: S.route.kind === 'client_reply' ? S.ctx.message.body_text : null,
+    intro_email: S.route.kind === 'new_trigger' ? S.ctx.message.body_text : null,
+    conversation: conversation(S),
+    ...groupFollowup(t, purpose),
     ...extra,
   };
+}
+
+// A follow-up in a group with some answers in: aimed at whoever is silent.
+function groupFollowup(t, purpose) {
+  if (purpose !== 'followup' || !G.isGroup(t)) return {};
+  const answered = Object.keys(t.responses || {});
+  const waiting = G.pending(t, t.responses);
+  if (!answered.length || !waiting.length) return {};
+  const first = (a) => U.firstName((t.client_names || {})[a], a);
+  return { answered: U.joinNames(answered.map(first)), waiting_on: U.joinNames(waiting.map(first)) };
 }
 
 // Queue a client email. Its words are drafted in finish().
@@ -680,13 +793,85 @@ function queueClientEmail(S, purpose, fill, extra = {}) {
       graph_message_id: target.graph_message_id, from_address: target.from_address, from_name: target.from_name,
       subject: target.subject, event_at: target.event_at, body_text: target.body_text,
     },
-    facts: facts(S, purpose, extra.facts),
+    facts: facts(S, purpose, { ...extra.facts,
+      ...(extra.mentions ? { open_times: extra.mentions.open_text, asked_about: extra.mentions.asked_text } : {}) }),
+    mentions: extra.mentions || null,
     depends_on_ref: extra.depends_on_ref || null,
   };
 }
 
-// Offer a set of slots: offers, holds, and the email.
-function offerSlots(S, slots, round, purpose, asked = null) {
+// The days and times this email may name, or null to forbid them all.
+function mentionsFor(S, open, asked = {}) {
+  if (U.setting(S.ctx, 'llm_free_dates', true) === false) return null;
+  const said = S.route.kind === 'client_reply' ? S.ctx.message.body_text : '';
+  return F.mentionable({ open, ...asked }, employeeOf(S).timezone, said);
+}
+
+// What the client asked about, for mentionFor: the times they named, or the
+// days of their window (capped: a month of names is enough).
+function askedMentions(a) {
+  const c = a.constraints || {};
+  const dates = [];
+  if (c.earliest_date) {
+    const end = c.latest_date || c.earliest_date;
+    for (let d = DateTime.fromISO(c.earliest_date), i = 0; d.toISODate() <= end && i < 31; d = d.plus({ days: 1 }), i++) dates.push(d.toISODate());
+  } else if (c.latest_date) dates.push(c.latest_date);
+  return { asked: a.askedStarts || [], askedDates: dates, askedDays: c.days_of_week || [] };
+}
+
+// Offer a set of slots. If there are more legal times than the default picks,
+// the model chooses among them first (choose() then calls placeOffer).
+function offerSlots(S, picked, round, purpose, asked = null, askedInfo = {}) {
+  const offer = { slots: picked.slots, round, purpose, asked, askedInfo, why: null };
+  const choices = U.setting(S.ctx, 'llm_choose_times', true) === false ? [] : SL.shortlist(picked.pool || [], picked.slots);
+  if (choices.length <= picked.slots.length) return placeOffer(S, offer);
+  const t = threadView(S);
+  const zone = employeeOf(S).timezone;
+  S.pendingOffer = { ...offer, choices };
+  S.choice = L.buildRequest(S.ctx, P.choosePrompt({
+    count: picked.slots.length,
+    employeeFirst: employeeOf(S).first_name,
+    meeting: `${t.duration_min}-minute ${F.locationPhrase(t.location_type, t.location_text)}`,
+    optionsText: choices.map((c, i) => `${i + 1}. ${F.formatSpoken(c.start, zone)}`).join('\n'),
+    conversation: conversation(S),
+    latest: S.route.kind === 'client_reply' ? S.ctx.message.body_text : null,
+    intro: S.route.kind === 'new_trigger' ? S.ctx.message.body_text : null,
+  }), { temperature: 0, maxTokens: 4096, extraSetting: 'llm_choice_extra_body' });
+}
+
+// The model's picks, if they are legal: exactly the right number of different
+// options from the list, not overlapping, and over two days when the list
+// allows it. Anything else means the default slots stand.
+function legalPicks(picks, { slots, choices }) {
+  if (!Array.isArray(picks) || picks.length !== slots.length) return null;
+  if (new Set(picks).size !== picks.length) return null;
+  if (!picks.every((n) => Number.isInteger(n) && n >= 1 && n <= choices.length)) return null;
+  const chosen = picks.map((n) => choices[n - 1]).sort((a, b) => a.start.localeCompare(b.start));
+  if (chosen.some((c, i) => i > 0 && Date.parse(chosen[i - 1].end) > Date.parse(c.start))) return null;
+  const days = (list) => new Set(list.map((c) => c.start.slice(0, 10))).size;
+  if (slots.length > 1 && days(choices) > 1 && days(chosen) < 2) return null;
+  return chosen.map((c, i) => ({ ...c, option_no: i + 1 }));
+}
+
+function choose(S, resp) {
+  const p = S.pendingOffer;
+  S.choice = null;
+  S.pendingOffer = null;
+  if (!p) return S;
+  const parsed = L.parseModelJson(resp, 'choice');
+  const reason = parsed.ok ? String(parsed.value.reason || '').slice(0, 300) : '';
+  const picks = parsed.ok ? legalPicks(parsed.value.picks, p) : null;
+  if (!parsed.ok) S.log.push(`time choice failed, using the default times: ${parsed.error}`);
+  else if (!(parsed.value.picks || []).length) S.log.push(`time choice: no stated preference (${reason})`);
+  else if (!picks) S.log.push(`time choice not legal, using the default times: ${JSON.stringify(parsed.value.picks).slice(0, 100)}`);
+  else S.log.push(`time choice: ${reason}`);
+  placeOffer(S, { ...p, slots: picks || p.slots, why: picks ? reason : null });
+  requestDraft(S);
+  return S;
+}
+
+// Offers, holds, and the email.
+function placeOffer(S, { slots, round, purpose, asked, askedInfo, why }) {
   const emp = employeeOf(S);
   const t = threadView(S);
   // Option numbers are unique per thread (round 2 is 4–6, …), so "option 2"
@@ -708,8 +893,10 @@ function offerSlots(S, slots, round, purpose, asked = null) {
   // numbers still exist internally; the classifier maps "Tuesday works" to one.
   const slotsText = U.setting(S.ctx, 'slot_style', 'bullets') === 'numbered'
     ? F.formatSlotList(offers, emp.timezone) : F.formatSlotOptions(offers, emp.timezone);
+  const was = movingFrom(S);
   queueClientEmail(S, purpose, { slotsText, askedText: asked || undefined },
-                   { facts: { asked: !!asked } });
+                   { facts: { asked: !!asked, why_these_times: why || null },
+                     mentions: mentionsFor(S, offers.map((o) => o.start), { ...askedInfo, asked: [...(askedInfo.asked || []), ...(was ? [was.start] : [])] }) });
   S.email.optional = asked ? (D.OPTIONAL_PLACEHOLDERS[purpose] || []) : [];
 }
 
@@ -725,7 +912,7 @@ function doStart(S, a, busy) {
   }
   S.plan.thread.transitions.push('PROPOSED');
   Object.assign(S.plan.thread.set, { round_count: 1, employee_moved_to_bcc: !!emp.bcc_after_intro });
-  offerSlots(S, r.slots, 1, 'intro');
+  offerSlots(S, r, 1, 'intro');
 }
 
 function doPropose(S, a, busy) {
@@ -773,16 +960,19 @@ function doPropose(S, a, busy) {
 
   if (t.state !== 'PROPOSED') S.plan.thread.transitions.push('PROPOSED');
   Object.assign(S.plan.thread.set, { round_count: rounds + 1, constraints });
+  // New times: the group answers afresh (a follow-up re-shares the same round's times).
+  if (G.isGroup(t) && a.reason !== 'followup') S.plan.thread.set.responses = {};
   if (a.reason === 'followup') S.plan.thread.set.followup_sent = true;
   touchIfClient(S);
 
   let purpose = { new_round: 'new_round', followup: 'followup', taken: 'taken', reschedule: 'reschedule_round',
-                  employee_declined: 'employee_declined', counter_unavailable: 'counter_unavailable' }[a.reason] || 'new_round';
+                  employee_declined: 'employee_declined', counter_unavailable: 'counter_unavailable',
+                  group_no_overlap: 'group_no_overlap' }[a.reason] || 'new_round';
   if (windowFull && purpose === 'new_round') purpose = 'window_unavailable';
   // What the client asked for, in code-written words, for {{ASKED}}.
   const asked = ['new_round', 'counter_unavailable', 'window_unavailable'].includes(purpose)
     ? (a.askedText || (hasConstraints(a.constraints) ? F.askedWindowText(a.constraints) : null)) : null;
-  offerSlots(S, r.slots, rounds + 1, purpose, asked);
+  offerSlots(S, r, rounds + 1, purpose, asked, askedMentions(a));
 }
 
 // Client (or counter-proposal) picked a slot that passed its re-check.
@@ -815,7 +1005,7 @@ function acceptFlow(S, slot, flags) {
   const was = movingFrom(S);
   outboxInternal(S, 'vic_confirmation', D.vicConfirmationMail(ctx, emp, threadView(S), slot, when, flags, tidToken(S),
     was ? F.formatSlot(was.start, was.end, emp.timezone) : null));
-  queueClientEmail(S, 'ack', { timeText: F.formatSpoken(slot.start, emp.timezone) });
+  queueClientEmail(S, 'ack', { timeText: F.formatSpoken(slot.start, emp.timezone) }, { mentions: mentionsFor(S, [slot.start]) });
 }
 
 function doAcceptOffer(S, a, busy) {
@@ -844,12 +1034,123 @@ function doCounterTimes(S, a, busy) {
     const e = end.toUTC().toISO({ suppressMilliseconds: true });
     const check = SL.checkSlot(slotParams(S, busy), s, e, 'propose');
     S.log.push(`counter ${time.date} ${time.time}: ${check.ok ? 'ok' : check.reason}`);
+    if (check.ok && a.voters) return groupCounter(S, { start: s, end: e, score: check.score, flags: check.flags }, a.voters, busy);
     if (check.ok) return acceptFlow(S, { start: s, end: e, score: check.score }, check.flags);
   }
   const c = counterFallbackConstraints(a);
   const first = a.times.map((x) => DateTime.fromISO(`${x.date}T${x.time}`, { zone: emp.timezone })).find((d) => d.isValid);
   const askedText = first ? F.askedTimeText(first.toISO(), emp.timezone) : null;
-  return doPropose(S, { reason: 'counter_unavailable', constraints: c || undefined, askedText }, busy);
+  const askedStarts = a.times.map((x) => DateTime.fromISO(`${x.date}T${x.time}`, { zone: emp.timezone })).filter((d) => d.isValid).map((d) => d.toISO());
+  return doPropose(S, { reason: 'counter_unavailable', constraints: c || undefined, askedText, askedStarts }, busy);
+}
+
+// ---------------------------------------------------------------------------
+// group meetings
+// ---------------------------------------------------------------------------
+const firstNames = (t, addrs) => addrs.map((a) => U.firstName((t.client_names || {})[a], a));
+
+// A group member said which of the open times work for them.
+function doGroupAnswer(S, a, busy) {
+  const ctx = S.ctx;
+  const t = threadView(S);
+  const responses = G.record(t.responses, a.voters, a.starts, ctx.now);
+  const live = liveThreadOffers(ctx).filter((o) => o.status === 'offered');
+  const common = G.viable(live, responses);
+  if (!common.length) {
+    S.log.push(`group: no open time works for everyone who answered (${Object.keys(responses).join(', ')})`);
+    return doPropose(S, { reason: 'group_no_overlap' }, busy);
+  }
+  const waiting = G.pending(t, responses);
+  if (!waiting.length) {
+    // Everyone agreed: the earliest common time that's still free goes to Vic.
+    for (const o of [...common].sort((x, y) => x.start.localeCompare(y.start))) {
+      const check = SL.checkSlot(slotParams(S, busy), o.start, o.end, 'recheck');
+      S.log.push(`group: everyone can do ${o.start}: ${check.ok ? 'ok' : check.reason}`);
+      if (check.ok) {
+        S.plan.thread.set.responses = responses;
+        return acceptFlow(S, o, check.flags);
+      }
+    }
+    return doPropose(S, { reason: 'taken', extraUpdates: common.map((o) => ({ id: o.id, status: 'expired' })) }, busy);
+  }
+  // Still waiting on someone. Times anyone ruled out are dropped; no
+  // last_inbound touch, so the follow-up and stall timers keep running for
+  // whoever hasn't answered.
+  S.plan.thread.set.responses = responses;
+  releaseOffers(S, live.filter((o) => !common.includes(o)), 'declined');
+  const view = threadView(S);
+  queueClientEmail(S, 'group_partial', { slotsText: slotsTextFor(S, common) }, {
+    facts: { answered: U.joinNames(firstNames(view, a.voters)), waiting_on: U.joinNames(firstNames(view, waiting)),
+             open_count: common.length },
+    mentions: mentionsFor(S, common.map((o) => o.start)),
+  });
+  S.log.push(`group: waiting on ${waiting.join(', ')}; ${common.length} time(s) still work`);
+}
+
+function slotsTextFor(S, offers) {
+  const zone = employeeOf(S).timezone;
+  return U.setting(S.ctx, 'slot_style', 'bullets') === 'numbered' ? F.formatSlotList(offers, zone) : F.formatSlotOptions(offers, zone);
+}
+
+// A group member suggested a time that's free for the employee: ask the
+// others about it (a round of one), counting the suggester as a yes.
+function groupCounter(S, slot, voters, busy) {
+  const ctx = S.ctx;
+  const t = ctx.thread;
+  const responses = G.record({}, voters, [slot.start], ctx.now);
+  if (!G.pending(t, responses).length) return acceptFlow(S, slot, slot.flags);
+  const maxRounds = U.setting(ctx, 'max_rounds', 4);
+  if (t.round_count >= maxRounds) return doEscalate(S, { reason: `No agreement after ${t.round_count} rounds of times`, handoff: true });
+  releaseOffers(S, liveThreadOffers(ctx), 'superseded');
+  Object.assign(S.plan.thread.set, { round_count: t.round_count + 1, responses });
+  if (t.state !== 'PROPOSED') S.plan.thread.transitions.push('PROPOSED');
+  touchIfClient(S);
+  const view = threadView(S);
+  placeOffer(S, { slots: [{ ...slot, option_no: 1 }], round: t.round_count + 1, purpose: 'group_counter', asked: null, askedInfo: { asked: [slot.start] }, why: null });
+  S.email.facts = { ...S.email.facts, answered: U.joinNames(firstNames(view, voters)),
+                    waiting_on: U.joinNames(firstNames(view, G.pending(t, responses))) };
+}
+
+// Follow-up went unanswered by part of the group. If the people who did
+// answer share a time, Vic decides: book it, or have Sarah chase the rest.
+function doGroupStall(S) {
+  const ctx = S.ctx;
+  const t = ctx.thread;
+  const emp = employeeOf(S);
+  const responses = t.responses || {};
+  const live = liveThreadOffers(ctx).filter((o) => o.status === 'offered');
+  const common = G.viable(live, responses).sort((x, y) => x.start.localeCompare(y.start));
+  const silent = G.pending(t, responses);
+  const agreed = Object.keys(responses);
+  if (!common.length) {
+    return doEscalate(S, { reason: `${U.joinNames(firstNames(t, silent))} never replied, and the others didn't agree on a time`, handoff: false });
+  }
+  const offer = common[0];
+  S.plan.offers.update.push({ id: offer.id, status: 'accepted' });
+  S.plan.thread.set.accepted_offer_id = offer.id;
+  releaseOffers(S, live.filter((o) => o.id !== offer.id), 'superseded');
+  S.plan.thread.transitions.push('CLIENT_ACCEPTED', 'AWAITING_VIC');
+  S.plan.thread.set.vic_clarify_asked = false;
+  outboxInternal(S, 'vic_confirmation', D.vicGroupConfirmationMail(ctx, emp, t, offer,
+    F.formatSlot(offer.start, offer.end, emp.timezone), offer.flags, tidToken(S),
+    { agreed: firstNames(t, agreed), silent: firstNames(t, silent) }));
+}
+
+// Vic: "chase Priya". Back to waiting on the group, with the agreed time on
+// the table; the follow-up flag is set so the stall timer comes round again.
+function doNudge(S) {
+  const ctx = S.ctx;
+  const t = ctx.thread;
+  const offer = acceptedOfferOf(ctx);
+  if (!offer) return doEscalate(S, { reason: 'You asked me to follow up, but I lost track of the agreed time', handoff: false });
+  S.plan.offers.update.push({ id: offer.id, status: 'offered' });
+  Object.assign(S.plan.thread.set, { accepted_offer_id: null, followup_sent: true });
+  S.plan.thread.transitions.push('PROPOSED');
+  const silent = G.pending(t, t.responses);
+  queueClientEmail(S, 'group_nudge', { slotsText: slotsTextFor(S, [offer]) }, {
+    facts: { answered: U.joinNames(firstNames(t, Object.keys(t.responses || {}))), waiting_on: U.joinNames(firstNames(t, silent)) },
+    mentions: mentionsFor(S, [offer.start]),
+  });
 }
 
 function doBook(S, a, busy) {
@@ -867,8 +1168,8 @@ function doBook(S, a, busy) {
   }
   const view = threadView(S);
   const names = view.client_names || {};
-  const attendees = [...(view.client_addresses || []).map((x) => ({ address: x, name: names[x] || '' })),
-                     ...(view.other_internal || []).map((x) => ({ address: x, name: '' }))];
+  // other_internal: on the emails but left out of the meeting by the employee, so not invited.
+  const attendees = (view.client_addresses || []).map((x) => ({ address: x, name: names[x] || '' }));
   const local = (iso) => DateTime.fromISO(iso, { setZone: true }).setZone(emp.timezone).toFormat("yyyy-MM-dd'T'HH:mm:ss");
   const title = `${D.clientLabel(view)} / ${emp.display_name}${view.topic ? `: ${view.topic}` : ''}`;
   // Rescheduling: move the existing event (Exchange sends the attendees an
@@ -893,7 +1194,8 @@ function doBook(S, a, busy) {
     S.plan.outbox.push({ kind: 'delete_hold', purpose: 'hold', offer_id: offer.id, depends_on_ref: 'booking',
                          payload: { employee_upn: U.lower(emp.upn) } });
   }
-  queueClientEmail(S, t.booked_event_id ? 'rescheduled' : 'confirmed', { timeText: when }, { depends_on_ref: 'booking' });
+  queueClientEmail(S, t.booked_event_id ? 'rescheduled' : 'confirmed', { timeText: when },
+                   { depends_on_ref: 'booking', mentions: mentionsFor(S, [offer.start], { asked: was ? [was.start] : [] }) });
 }
 
 // The offer the meeting is booked at now, while it's being moved.
@@ -949,6 +1251,8 @@ function doAiReply(S) {
 }
 
 function doStall(S) {
+  const t = S.ctx.thread;
+  if (G.isGroup(t) && Object.keys(t.responses || {}).length) return doGroupStall(S);
   const emp = employeeOf(S);
   S.plan.thread.transitions.push('STALLED');
   releaseOffers(S, liveThreadOffers(S.ctx), 'expired');
@@ -1000,7 +1304,7 @@ function finish(S, resp) {
     if (S.llm) {
       const parsed = L.parseModelJson(resp, 'draft');
       if (parsed.ok) {
-        const v = D.validateDraft(parsed.value.body, e.purpose, { optional: e.optional || [] });
+        const v = D.validateDraft(parsed.value.body, e.purpose, { optional: e.optional || [], mentions: e.mentions });
         if (v.ok) { body = v.body; source = S.redrafted ? 'model_retry' : 'model'; } else errors = v.errors;
         if (!v.ok && !S.redrafted) {
           S.redrafted = true;
@@ -1022,7 +1326,7 @@ function finish(S, resp) {
     const rendered = D.renderClientEmail(S.ctx, body, e.fill, e.reply_target, employeeOf(S).timezone, employeeOf(S), e.purpose);
     S.plan.outbox.push({
       kind: 'reply', purpose: e.purpose, depends_on_ref: e.depends_on_ref || undefined,
-      needs_approval: D.hasExternal(S.ctx, e.recipients),
+      needs_approval: D.hasExternal(S.ctx, e.recipients) || D.hasClient(threadView(S), e.recipients),
       payload: { reply_to_graph_id: e.reply_target.graph_message_id, ...e.recipients, ...rendered,
                  draft_source: source, draft_errors: errors },
     });
@@ -1040,7 +1344,7 @@ function finish(S, resp) {
 }
 
 module.exports = {
-  start, interpret, act, finish,
+  start, interpret, act, choose, finish,
   // exported for tests
   sanitizeConstraints, sanitizeTimes, hasConstraints, sameZone, calendarRequest,
 };

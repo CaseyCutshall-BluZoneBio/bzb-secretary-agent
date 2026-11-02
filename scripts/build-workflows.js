@@ -274,12 +274,20 @@ return { json: lib.decide.interpret(S, httpResult($json)) };`),
     code(W, '3 · Act', [1980, 300], `${HTTP_RESULT}
 const S = $('2 · Interpret').item.json;
 return { json: lib.decide.act(S, httpResult($json)) };`),
+    // More legal times than the default picks: the model chooses among them.
+    ifNode(W, 'Choose?', [2090, 300], '$json.choice != null'),
+    http(W, 'LLM: choose', [2090, 480], {
+      method: 'POST', url: '={{ $json.choice.url }}', body: 'JSON.stringify($json.choice.body)', cred: 'llm', timeout: 180000,
+    }),
+    code(W, '3b · Apply choice', [2090, 660], `${HTTP_RESULT}
+const S = $('3 · Act').item.json;
+return { json: lib.decide.choose(S, httpResult($json)) };`),
     ifNode(W, 'Draft?', [2200, 300], '$json.llm != null'),
     http(W, 'LLM: draft', [2420, 180], {
       method: 'POST', url: '={{ $json.llm.url }}', body: 'JSON.stringify($json.llm.body)', cred: 'llm', timeout: 180000,
     }),
     code(W, '4 · Finish', [2640, 300], `${HTTP_RESULT}
-const S = $('3 · Act').item.json;
+const S = $('Draft?').item.json;
 return { json: lib.decide.finish(S, httpResult($json)) };`),
     // A draft that broke a rule gets one redraft (finish() asks for it by
     // setting llm); otherwise straight on to the plan.
@@ -301,14 +309,15 @@ return { json: lib.decide.finish(S, httpResult($json)) };`),
     ['Calendar?', 'Delegated calendar?', 0], ['Calendar?', '3 · Act', 1],
     ['Delegated calendar?', 'Portal: calendar', 0], ['Delegated calendar?', 'Graph: calendar', 1],
     ['Portal: calendar', '3 · Act'], ['Graph: calendar', '3 · Act'],
-    ['3 · Act', 'Draft?'],
+    ['3 · Act', 'Choose?'], ['Choose?', 'LLM: choose', 0], ['Choose?', 'Draft?', 1],
+    ['LLM: choose', '3b · Apply choice'], ['3b · Apply choice', 'Draft?'],
     ['Draft?', 'LLM: draft', 0], ['Draft?', '4 · Finish', 1], ['LLM: draft', '4 · Finish'],
     ['4 · Finish', 'Redraft?'], ['Redraft?', 'LLM: redraft', 0], ['Redraft?', 'Plan?', 1],
     ['LLM: redraft', '5 · Finish redraft'], ['5 · Finish redraft', 'Plan?'],
     ['Plan?', 'Apply plan', 0], ['Apply plan', 'Kick executor'],
   ];
   return workflow(W, 'Sarah · Processor', nodes, pairs,
-    { description: 'One inbound email or timer event → route → classify (LLM) → calendar → decide → draft (LLM) → apply_plan.' });
+    { description: 'One inbound email or timer event → route → classify (LLM) → calendar → decide → choose times (LLM) → draft (LLM) → apply_plan.' });
 }
 
 // ---------------------------------------------------------------------------

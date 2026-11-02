@@ -19,7 +19,7 @@
 //   LITELLM_URL   http://100.69.55.113:4000/v1/chat/completions (via Tailscale)
 //   LITELLM_KEY   the "Scheduling Agent" virtual key (asked for if unset)
 //   LLM_MODEL     Qwen3.8-Flash-Next-GGUF-UD-Q3_K_XL
-//   LLM_JSON_SCHEMA  false     LLM_THINKING  off
+//   LLM_JSON_SCHEMA  false     LLM_THINKING  off     LLM_CHOICE_THINKING  off
 //   EMPLOYEE_NAME "Casey Cutshall"   EMPLOYEE_TZ  America/New_York
 const readline = require('readline');
 const D = require('../src/decide');
@@ -45,9 +45,10 @@ function makeWorld(o = {}) {
     llm_model: o.model || env('LLM_MODEL', 'Qwen3.8-Flash-Next-GGUF-UD-Q3_K_XL'),
     llm_json_schema: (o.jsonSchema !== undefined ? String(o.jsonSchema) : env('LLM_JSON_SCHEMA', 'false')) === 'true',
     llm_extra_body: thinkingOff ? { chat_template_kwargs: { enable_thinking: false } } : null,
+    llm_choice_extra_body: env('LLM_CHOICE_THINKING', 'off') === 'on' ? { chat_template_kwargs: { enable_thinking: true } } : null,
     max_rounds: 4, holds_enabled: true, slot_step_min: 30, widen_window_days: 7, max_horizon_days: 90, require_internal_auth: true,
   };
-  return { employee, settings, thread: null, offers: [], busy: [], seq: 1, msgSeq: 1, clientEmail: 'client@example.com', clientName: 'Dana Whitfield' };
+  return { employee, settings, thread: null, offers: [], busy: [], history: [], seq: 1, msgSeq: 1, clientEmail: 'client@example.com', clientName: 'Dana Whitfield' };
 }
 
 function message(w, from, body, extra = {}) {
@@ -65,7 +66,7 @@ function context(w, msg, matchKind) {
   return {
     now: new Date().toISOString(), event: { type: 'message', message_id: msg.id }, settings: w.settings, employees: [w.employee],
     message: msg, match_kind: matchKind, thread: w.thread, thread_offers: w.offers, live_offers: live,
-    reply_target: w.lastClientMessage || msg, history: [], open_outbox: [],
+    reply_target: w.lastClientMessage || msg, history: w.history, open_outbox: [],
   };
 }
 
@@ -126,14 +127,20 @@ async function turn(w, who, text, llm) {
   let S = D.start(context(w, msg, matchKind));
   S = D.interpret(S, await call(S.llm));
   S = D.act(S, S.calendar ? calendarFor(w) : null);
+  if (S.choice) S = D.choose(S, await call(S.choice));
   S = D.finish(S, await call(S.llm));
   if (S.llm) S = D.finish(S, await call(S.llm));   // the one redraft
 
+  // Only what the client saw goes in the history, as in load_context.
+  if (who !== 'me') w.history.push({ direction: 'in', from_address: msg.from_address, body: text });
   const plan = S.plan;
   const report = { understood: S.classification, action: S.action && S.action.type, log: S.log, emails: [] };
   if (plan) {
     for (const o of plan.outbox) {
-      if (o.kind === 'reply') report.emails.push({ to: 'client', purpose: o.purpose, source: o.payload.draft_source, body: o.payload.body_text, errors: o.payload.draft_errors });
+      if (o.kind === 'reply') {
+        report.emails.push({ to: 'client', purpose: o.purpose, source: o.payload.draft_source, body: o.payload.body_text, errors: o.payload.draft_errors });
+        w.history.push({ direction: 'out', from_address: w.settings.sarah_upn, body: o.payload.body_text });
+      }
       if (o.kind === 'new_mail' || o.kind === 'notify_internal') report.emails.push({ to: 'you', purpose: o.purpose, subject: o.payload.subject, body: o.payload.body_text });
     }
     report.offered = plan.offers.insert.filter((o) => (o.status || 'offered') === 'offered').length;

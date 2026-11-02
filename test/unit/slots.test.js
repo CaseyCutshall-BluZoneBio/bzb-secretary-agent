@@ -228,3 +228,22 @@ test('several options on one day are spread out, not back to back', () => {
   assert.ok(pmMins.every((m) => m >= 12 * 60));
   assert.ok(pmMins[1] - pmMins[0] >= 60 && pmMins[2] - pmMins[1] >= 60, `afternoon spread: ${pmMins.join(', ')}`);
 });
+
+test('shortlist: spreads through each day, keeps the defaults, stays short and chronological', () => {
+  const SLm = require('../../src/slots');
+  const pool = [];
+  for (let d = 5; d <= 16; d++) {
+    for (let h = 13; h <= 20; h++) {
+      const dd = String(d).padStart(2, '0');
+      pool.push({ start: `2026-10-${dd}T${h}:00:00Z`, end: `2026-10-${dd}T${h}:30:00Z`, startMs: Date.UTC(2026, 9, d, h), day: `2026-10-${dd}`, score: 100, flags: [] });
+    }
+  }
+  const defaults = [{ start: '2026-10-16T20:00:00Z', end: '2026-10-16T20:30:00Z', score: 100, flags: [] }];
+  const list = SLm.shortlist(pool, defaults);
+  assert.ok(list.length <= 30);
+  assert.ok(list.some((c) => c.start === defaults[0].start), 'defaults are always kept');
+  assert.deepEqual(list.map((c) => c.start), list.map((c) => c.start).sort());
+  const firstDay = list.filter((c) => c.start.startsWith('2026-10-05')).map((c) => c.start.slice(11, 13));
+  assert.ok(firstDay.length === 4 && firstDay[0] === '13' && Number(firstDay[3]) >= 18, firstDay.join());
+  assert.deepEqual(Object.keys(list[0]).sort(), ['end', 'flags', 'score', 'start']);
+});

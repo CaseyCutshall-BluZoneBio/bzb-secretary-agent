@@ -73,7 +73,9 @@ Create 2–3 throwaway Gmail accounts as fake clients. Vic (or you, enrolled thr
 | 2 | Intro with "45 min, in person at our office" | 45-min in-person slots with travel buffer; location = office address |
 | 3 | Intro with "sometime next week, afternoons" | All options next week, after 12:00 |
 | 4 | Vic CCs Sarah **and** Brad | Brad CC'd on Sarah's replies, never treated as a client |
-| 5 | Vic CCs Sarah with no external recipient | Vic gets "couldn't start scheduling", no thread |
+| 5 | Vic CCs Sarah with nobody else on To/CC | Vic gets "couldn't start scheduling", no thread |
+| 5b | Vic CCs Sarah with a client and a BZB colleague on To/CC | Sarah schedules with both |
+| 5c | Same, but Vic writes "find a time for me and Dana" | Sarah schedules with Dana only; the colleague stays cc'd, not invited |
 | 6 | Client: "Option 2 works" | Ack to client; Vic asked to confirm; unused holds released |
 | 7 | Client: "the second one" | Same as 6 |
 | 8 | Client: "Tuesday at 2 works" (a slot that was offered) | Same as 6 |

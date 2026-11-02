@@ -2,7 +2,7 @@
 
 Three layers. All of them passed on 2026-09-30 against n8n 2.41.4, Node 24, and Postgres 14 (earlier runs: Postgres 16).
 
-## Unit tests: `npm test` (118 + 40 tests, ~2 s)
+## Unit tests: `npm test` (136 + 40 tests, ~2 s)
 
 Plain Node (≥ 20). No n8n, database, or network. `npm test` runs `test/unit/` and then the portal's own suite (`portal/test/`, an npm workspace).
 
@@ -11,14 +11,14 @@ Plain Node (≥ 20). No n8n, database, or network. `npm test` runs `test/unit/` 
 | `test/unit/slots.test.js` | Hard rules (busy, gaps, travel buffer, day cap, notice, working hours), soft scoring, back-to-back fallback order, window widening, all-day/OOF handling, holds not counted, cross-thread offers blocking, constraints, requested windows past the default look-ahead, the horizon, time-of-day mix, re-check modes |
 | `test/unit/decide.test.js` | Every processor path end to end with canned model/calendar responses: trigger → intro; accept; taken slot; counter-proposals (free / busy / other timezone / back-to-back); reject-all; max rounds; question hand-off; delegation to an EA; unparseable replies; Vic YES / NO / unclear / conflict; take-over; follow-up, stall and reminder timers; recipient guard; far-out requests ("3 weeks from today", "week of …", a single day, past the horizon) and the calendar read covering them |
 | `test/unit/parts.test.js` | Model-output parser (`<think>`, fences, echoed schemas), draft validator (every forbidden fact type, placeholder rules, every template passes), slot formatting incl. DST, routing and spoof/OOO guards, Graph request shapes, retry classification, poller normalization |
-| `test/unit/simulate.test.js` | The terminal simulator (`scripts/simulate.js`): a full request → pick → confirm → booked loop in memory, multi-round numbering, the redraft |
+| `test/unit/simulate.test.js` | The terminal simulator (`scripts/simulate.js`): a full request → pick → confirm → booked loop in memory, multi-round numbering, the redraft, the model choosing times |
 | `test/unit/bundle.test.js` | The generated bundle runs in a sandbox with only Luxon globals (as in an n8n Code node) |
 | `test/unit/delegated.test.js` | Delegated calendars: calendar reads and holds/bookings/releases go to the broker with the same event bodies; mail never does; `NeedsReconnect` → `NEEDS_VIC` with no client email; paused / not-connected triggers ignored with notices; pause doesn't affect running threads; matching by mail address; per-employee signature; prompts never say "Vic" or assume pronouns |
 | `portal/test/units.test.js` | Config (HTTPS origin only, redirect URI derived), AES-256-GCM round trip / tamper / wrong employee / key rotation, sealed sign-in state, Windows→IANA timezones (every mapped zone valid), settings validation and Outlook prefill, tenant / guest / domain rejection, MSAL error classification (reconnect vs account gone vs our own bad secret vs transient), log scrubbing |
 | `portal/test/web.test.js` | Over real HTTP, MSAL mocked: every route except `/login` redirects before sign-in; security headers on every response; spoofed `Host` / `X-Forwarded-*` ignored for redirects and the OAuth redirect URI; `__Host-` cookie names and attributes, other cookies ignored; PKCE/state/nonce; identical generic errors; connect stores encrypted tokens and prefill; CSRF and Origin checks; settings; pause; test email per mode; admin allowlist; offboarded sessions; rate limiting by socket address |
 | `portal/test/broker.test.js` | The broker is a separate listener the public server never routes; key auth; only four operations, on `/me`; Graph answers passed through; refresh-and-retry on 401; `NeedsReconnect` flags once with a code and no PII; account disabled → no employee email; an expired portal secret flags nobody; per-employee refresh serialization; daily keep-alive |
 
-## Database tests: `npm run test:db` (142 tests)
+## Database tests: `npm run test:db` (147 tests)
 
 ```bash
 PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres npm run test:db
@@ -43,7 +43,7 @@ This creates `sched_agent_test` (and the `sched_portal` role if missing), applie
 
 You can run the test file against the production database too. It never commits.
 
-## End-to-end: `npm run test:e2e` (14 scenarios, ~6 min)
+## End-to-end: `npm run test:e2e` (15 scenarios, ~6 min)
 
 This runs **the real generated workflows in a real n8n** against:
 

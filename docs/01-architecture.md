@@ -10,7 +10,7 @@
 | Portal + token broker | `sarah-portal` in the compose stack; UI public through Tailscale Funnel `:10000`, broker on the compose network only | Sign-in, calendar consent, settings, pause. The broker holds each employee's encrypted refresh token and makes their calendar calls for n8n (`docs/09-portal.md`) |
 | n8n (6 workflows) | BZB-AI-1 compose stack | Scheduling, retries, HTTP calls, error alerts |
 | `sched` schema | Postgres on BZB-AI-1 (own database + role) | All state, config, and invariants |
-| LiteLLM → local model | BZB-AI-1 | Classifies emails; writes email wording |
+| LiteLLM → local model | BZB-AI-1 | Classifies emails; chooses among legal times; writes email wording |
 | `src/` (JavaScript) | Inlined into n8n Code nodes at build time | Routing, slot picking, decisions, draft validation |
 
 ## Workflows
@@ -109,7 +109,7 @@ Nothing in the Processor talks to Graph except the read-only calendar lookup. Ev
 | Anyone who emails Sarah drives Vic's calendar | Only an **enrolled employee** can start a thread, and only with `X-MS-Exchange-Organization-AuthAs: Internal` (Exchange-authenticated internal mail). A spoofed "Vic" email is ignored, and Casey gets an alert. External senders can only continue threads that already exist |
 | Prompt injection in a client email | The model's output is a fixed JSON classification. It can't add recipients, choose times, or trigger actions. Recipients come from message headers and the thread record. Every outbound list is checked against the thread's allowed people, and a mismatch throws. Client display names are reduced to letters/spaces (60 chars) before they're stored, and are kept out of the prompt that classifies Vic's YES/NO |
 | Internal notes reaching the client | Sarah replies to (and so quotes) only the newest email **from a client**, or Vic's original trigger. Never Vic's private reply, a colleague's note, an auto-reply, or the confirmation thread |
-| Model invents a time, a link, or a promise | Drafts are rejected on any date / weekday / clock time / timezone / relative date / URL / email / phone. Placeholders are checked exactly. A rejected draft gets one redraft with the problem quoted; a second failure uses the template. The day the client asked about is available to the model only as `{{ASKED}}`, filled in by code (D20) |
+| Model invents a time, a link, or a promise | Drafts are rejected on any timezone / relative date / URL / email / phone, and on any day or time that isn't a real open option or what the client asked about (a day with the wrong time fails too; D24). Placeholders are checked exactly. A rejected draft gets one redraft with the problem quoted; a second failure uses the template. Emails with no times in play may name none |
 | Model impersonates a person | The display name and signature carry "(AI)". The validator rejects "I'm a person"-style claims |
 | Email link scanners approving shadow items | Review links only show a confirm page. Only a POST acts, the token is 256-bit and single-use, and the webhook is tailnet-only |
 | Double processing / double booking | `internet_message_id` is unique. Once processing starts, a message is never processed again. Live offers can't overlap across threads (Postgres exclusion constraint). Bookings are idempotent (`transactionId`), and a second YES while a booking is queued is ignored |
@@ -119,6 +119,8 @@ Nothing in the Processor talks to Graph except the read-only calendar lookup. Ev
 | Model unavailable | A trigger isn't guessed at ("Sarah, don't book anything yet" contains the same keywords). It's logged as `ignored_model_unavailable` and Casey is alerted. Client replies escalate to Vic. Drafts fall back to templates |
 
 ## Slot selection (code, `src/slots.js`)
+
+Code finds every legal time and picks a default set. If there are more legal times than it needs, the model sees a shortlist of up to 30 and may swap in others, going by what people said ("mornings are easier", "I land late Tuesday"). Code checks the picks (right number, on the list, no overlap, two days when possible) and keeps its defaults on anything else, including when the model is down or nobody stated a preference (D23).
 
 **Hard rules.** A slot that breaks any of these is never offered:
 
