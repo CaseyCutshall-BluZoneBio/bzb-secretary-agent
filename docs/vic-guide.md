@@ -80,7 +80,7 @@ You'll get one email, **"Action needed: reconnect your calendar to Sarah"**. Cli
 - If a client asks to move a booked meeting, she offers new times, asks you to confirm ("Confirm: … asked to move your meeting"), and on your YES moves the existing invite, so the client gets an update rather than a second invite. If a client wants to cancel, that comes to you.
 - After a meeting is booked, you can reply on the same email thread with "Sarah, find us a follow-up time" to start a new one.
 - If a client needs a second round, options continue numbering (4, 5, 6…), so there's never confusion about which "option 2" they meant.
-- Her emails are signed "Scheduling Assistant to *your name* (AI)", so clients know she's an assistant.
+- Her emails are signed "Executive Assistant to *your name* (AI)", so clients know she's an assistant.
 - **My threads** in the portal lists what she's working on for you.
 - She reads the whole conversation, and picks times to suit what people said ("mornings are easier"). She only ever offers times that are free on your calendar.
 - If a client asks whether she's an AI, she says so honestly and carries on scheduling (or offers to loop you in).

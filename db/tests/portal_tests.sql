@@ -43,7 +43,7 @@ SELECT pg_temp.ok('004: recorded in schema_migrations (with 001–003)',
 SELECT pg_temp.ok('004: Vic''s existing row keeps the app-only calendar path',
   (SELECT calendar_auth = 'app' AND NOT paused AND NOT needs_reconnect FROM employees WHERE upn = 'vic@bluzonebio.com'));
 SELECT pg_temp.ok('004: Vic gets a per-employee signature line naming him',
-  (SELECT signature_title = 'Scheduling Assistant to ' || display_name || ' (AI)' FROM employees WHERE upn = 'vic@bluzonebio.com'));
+  (SELECT signature_title = 'Executive Assistant to ' || display_name || ' (AI)' FROM employees WHERE upn = 'vic@bluzonebio.com'));
 SELECT pg_temp.ok('004: portal settings seeded',
   setting_text('portal_internal_url') = 'http://sarah-portal:3001' AND setting('portal_admins') = '[]'::jsonb);
 SELECT pg_temp.ok('004: the originals are kept as *_base and wrapped',
@@ -82,7 +82,7 @@ CREATE TEMP TABLE brad AS SELECT portal_sign_in('{"aad_object_id":"oid-brad","up
 SELECT pg_temp.ok('sign-in: a new person gets a delegated row that is not connected yet',
   (SELECT e->>'calendar_auth' = 'delegated' AND e->'calendar_connected_at' = 'null'::jsonb AND (e->>'enrolled')::boolean FROM brad));
 SELECT pg_temp.ok('sign-in: mail stored lowercase for matching From:, signature names the employee',
-  (SELECT mail = 'brad.lee@bluzonebio.com' AND signature_title = 'Scheduling Assistant to Brad Lee (AI)' FROM employees WHERE upn = 'brad@bluzonebio.com'));
+  (SELECT mail = 'brad.lee@bluzonebio.com' AND signature_title = 'Executive Assistant to Brad Lee (AI)' FROM employees WHERE upn = 'brad@bluzonebio.com'));
 SELECT pg_temp.ok('sign-in: signing in again finds the same row by object id',
   (portal_sign_in('{"aad_object_id":"oid-brad","upn":"brad@bluzonebio.com","display_name":"Brad Lee"}')->>'id')::int = (SELECT (e->>'id')::int FROM brad));
 SELECT pg_temp.expect_error('sign-in: object id is required',

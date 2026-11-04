@@ -55,7 +55,7 @@ docker compose exec -T db psql -U sched_agent -d sched_agent -c "SELECT version 
 docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/004_portal.sql
 ```
 
-`006_thread_history.sql` (the conversation for the model) and `005_reschedule.sql` (rescheduling) are also idempotent. Apply them in order: `docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/005_reschedule.sql`, then the same with `006_thread_history.sql` and `007_group_meetings.sql` (group meetings: who must agree, and what each person said).
+`006_thread_history.sql` (the conversation for the model) and `005_reschedule.sql` (rescheduling) are also idempotent. Apply them in order: `docker compose exec -T db psql -v ON_ERROR_STOP=1 -U sched_agent -d sched_agent < /opt/bzb-ai/sarah/db/005_reschedule.sql`, then the same with `006_thread_history.sql`, `007_group_meetings.sql` (group meetings: who must agree, and what each person said) and `008_signature_title.sql` (signatures say "Executive Assistant to …").
 
 `004_portal.sql` is idempotent (safe to run twice). It leaves existing rows working exactly as before: Vic keeps `calendar_auth = 'app'`. It also revokes `PUBLIC`'s default `EXECUTE` on every `sched` function. n8n connects as the owner, `sched_agent`, so it's unaffected; the portal role can only run `portal_*`.
 
@@ -82,7 +82,7 @@ INSERT INTO sched.settings (key, value, note) VALUES ('max_horizon_days', '90', 
 | `mode` | `off` | `off` / `dry_run` / `shadow` / `live`. See `docs/05-rollout.md` |
 | `processing_start_at` | install time | Inbound mail older than this is logged and ignored. Reset it the first time you leave `off` |
 | `sarah_upn` | `sarah.johnson@bluzonebio.com` | The only sender |
-| `sarah_name`, `signature_title`, `company_name` | Sarah Johnson · Scheduling Assistant to Vic Suarez (AI) · Blu Zone Bio | Signature lines. The second line is the AI disclosure; keep it |
+| `sarah_name`, `signature_title`, `company_name`, `signature_phone`, `sarah_upn`, `signature_website` | Sarah Johnson · Executive Assistant to Vic Suarez (AI) · BluZoneBio · (phone) · Email: sarah.johnson@bluzonebio.com · Website: www.bluzonebio.com | Signature lines, in the same layout as Vic's signature. Empty phone or website = that line is left out. The second line is the AI disclosure; keep it |
 | `internal_domains` | `["bluzonebio.com"]` | Addresses here are BZB staff. Sarah schedules with them like anyone else on To/CC |
 | `alert_address` | — | Errors and shadow-mode review emails go here (you) |
 | `graph_base_url` | `https://graph.microsoft.com/v1.0` | |
@@ -126,7 +126,7 @@ Columns added by `004` (`docs/09-portal.md`):
 | `paused`, `paused_at` | Set by the employee. New requests are ignored with a notice; running threads continue |
 | `needs_reconnect`, `needs_reconnect_since`, `reconnect_reason` | Their token is dead (the reason is an AADSTS code). New requests are ignored with a notice; threads that need the calendar go to `NEEDS_VIC` |
 | `aad_object_id`, `mail` | Entra identity; `mail` (primary SMTP) is matched against `From:` alongside `upn` |
-| `signature_title` | The AI-disclosure line in client emails, e.g. "Scheduling Assistant to Brad Lee (AI)" |
+| `signature_title` | The AI-disclosure line in client emails, e.g. "Executive Assistant to Brad Lee (AI)" |
 | `settings_saved_at`, `last_sign_in_at` | Saved own settings (the Outlook prefill then never overwrites them); last portal sign-in |
 | `enrolled` | Admin switch (unchanged). `false` = Sarah ignores them and they lose portal access. Use it for offboarding |
 

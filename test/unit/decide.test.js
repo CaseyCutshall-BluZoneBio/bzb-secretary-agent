@@ -45,7 +45,7 @@ test('new trigger → thread, 3 offers, 3 holds, intro reply with Vic moved to B
   assert.match(reply.payload.body_text, /\nAll times are Eastern \(UTC−04:00\)\.\n/);
   assert.ok(!/\n\d\. /.test(reply.payload.body_text), 'no option numbers for the client');
   assert.match(reply.payload.body_text, /\n\nBest,\nSarah Johnson\n/);
-  assert.match(reply.payload.body_text, /Sarah Johnson\nScheduling Assistant to Vic Suarez \(AI\)\nBlu Zone Bio$/);
+  assert.match(reply.payload.body_text, /Sarah Johnson\nExecutive Assistant to Vic Suarez \(AI\)\nBluZoneBio\nEmail: sarah\.johnson@bluzonebio\.com\nWebsite: www\.bluzonebio\.com$/);
   assert.ok(!/Best,\nSarah\n/.test(reply.payload.body_text), 'model sign-off stripped');
   assert.match(reply.payload.body_html, /<hr/);
 });

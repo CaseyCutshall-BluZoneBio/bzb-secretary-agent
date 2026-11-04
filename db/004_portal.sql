@@ -46,7 +46,7 @@ ALTER TABLE employees
   ADD COLUMN IF NOT EXISTS last_sign_in_at timestamptz;
 
 -- Vic's existing row keeps working exactly as before: calendar_auth = 'app'.
-UPDATE employees SET signature_title = 'Scheduling Assistant to ' || display_name || ' (AI)'
+UPDATE employees SET signature_title = 'Executive Assistant to ' || display_name || ' (AI)'
  WHERE signature_title IS NULL;
 
 -- -----------------------------------------------------------------------------
@@ -205,7 +205,7 @@ BEGIN
       'America/New_York',
       '{"mon":["09:00","17:00"],"tue":["09:00","17:00"],"wed":["09:00","17:00"],"thu":["09:00","17:00"],"fri":["09:00","17:00"],"sat":null,"sun":null}',
       '09:30', '16:00', 30, 'delegated',
-      'Scheduling Assistant to ' || v_name || ' (AI)', now())
+      'Executive Assistant to ' || v_name || ' (AI)', now())
     RETURNING * INTO e;
   END IF;
   RETURN sched.portal_employee_json(e);

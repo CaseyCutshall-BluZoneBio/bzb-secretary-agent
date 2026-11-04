@@ -200,10 +200,18 @@ function validateDraft(rawBody, purpose, { optional = [], mentions = null } = {}
 }
 
 // The second line is the AI disclosure. It names the employee Sarah is working
-// for, so it comes from their row when set ("Scheduling Assistant to Brad Lee (AI)").
+// for, so it comes from their row when set ("Executive Assistant to Brad Lee (AI)").
+// Laid out like Vic's own signature: name, title, company, phone, email, website.
+// Phone and website lines are left out when their setting is empty.
 function signature(ctx, employee) {
-  const title = (employee && employee.signature_title) || setting(ctx, 'signature_title', 'Scheduling Assistant (AI)');
-  return [setting(ctx, 'sarah_name', 'Sarah'), title, setting(ctx, 'company_name', '')].filter(Boolean).join('\n');
+  const title = (employee && employee.signature_title) || setting(ctx, 'signature_title', 'Executive Assistant (AI)');
+  const phone = setting(ctx, 'signature_phone', '');
+  const email = setting(ctx, 'sarah_upn', '');
+  const website = setting(ctx, 'signature_website', '');
+  return [
+    setting(ctx, 'sarah_name', 'Sarah'), title, setting(ctx, 'company_name', ''),
+    phone, email && `Email: ${email}`, website && `Website: ${website}`,
+  ].filter(Boolean).join('\n');
 }
 
 function fillPlaceholders(body, { slotsText, timeText, askedText }) {

@@ -35,11 +35,11 @@ function makeWorld(o = {}) {
     preferred_start: '09:30', preferred_end: '16:00', default_duration_min: 30, default_location: 'teams', office_address: null,
     hard_gap_min: 5, preferred_gap_min: 30, in_person_buffer_min: 30, max_meetings_per_day: 6, min_notice_hours: 24,
     search_window_days: 10, offers_per_round: 3, bcc_after_intro: true, enrolled: true, calendar_auth: 'app',
-    signature_title: `Scheduling Assistant to ${name} (AI)`,
+    signature_title: `Executive Assistant to ${name} (AI)`,
   };
   const thinkingOff = (o.thinking || env('LLM_THINKING', 'off')) === 'off';
   const settings = {
-    mode: 'live', sarah_upn: 'sarah.johnson@bluzonebio.com', sarah_name: 'Sarah Johnson', company_name: 'Blu Zone Bio',
+    mode: 'live', sarah_upn: 'sarah.johnson@bluzonebio.com', sarah_name: 'Sarah Johnson', company_name: 'BluZoneBio', signature_website: 'www.bluzonebio.com',
     internal_domains: ['bluzonebio.com'], alert_address: 'admin@bluzonebio.com', graph_base_url: 'https://graph.invalid/v1.0',
     litellm_url: o.litellmUrl || env('LITELLM_URL', 'http://100.69.55.113:4000/v1/chat/completions'),
     llm_model: o.model || env('LLM_MODEL', 'Qwen3.8-Flash-Next-GGUF-UD-Q3_K_XL'),

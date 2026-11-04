@@ -24,7 +24,7 @@ const CLIENT = (over) => ({ intent: 'other', accepted_option: null, proposed_tim
 // Brad signs in with brad@… but his mail address is brad.lee@…
 const BRAD = { ...VIC, id: 2, upn: 'brad@bluzonebio.com', mail: 'brad.lee@bluzonebio.com', display_name: 'Brad Lee', first_name: 'Brad',
                calendar_auth: 'delegated', calendar_connected_at: '2026-10-01T12:00:00Z', needs_reconnect: false, paused: false,
-               signature_title: 'Scheduling Assistant to Brad Lee (AI)' };
+               signature_title: 'Executive Assistant to Brad Lee (AI)' };
 const PORTAL = { portal_internal_url: 'http://sarah-portal:3001', portal_base_url: 'https://bzb-ai-1.tail9f1964.ts.net:10000' };
 
 function bradCtx(over = {}, emp = BRAD) {
@@ -58,7 +58,7 @@ test('delegated employee is matched by their mail address; BCC, notices and the 
   assert.equal(plan.thread.create.employee_id, 2);
   const reply = plan.outbox.find((o) => o.kind === 'reply');
   assert.deepEqual(reply.payload.bcc.map((p) => p.address), ['brad.lee@bluzonebio.com']);
-  assert.match(reply.payload.body_text, /Sarah Johnson\nScheduling Assistant to Brad Lee \(AI\)\nBlu Zone Bio$/);
+  assert.match(reply.payload.body_text, /Sarah Johnson\nExecutive Assistant to Brad Lee \(AI\)\nBluZoneBio\nEmail: sarah\.johnson@bluzonebio\.com\nWebsite: www\.bluzonebio\.com$/);
   assert.ok(!/Vic/.test(reply.payload.body_text), "Brad's client never sees Vic's name");
 });
 

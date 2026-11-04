@@ -10,7 +10,7 @@ const VIC = {
 
 const SETTINGS = {
   mode: 'live', sarah_upn: 'sarah.johnson@bluzonebio.com', sarah_name: 'Sarah Johnson',
-  signature_title: 'Scheduling Assistant to Vic Suarez (AI)', company_name: 'Blu Zone Bio',
+  signature_title: 'Executive Assistant to Vic Suarez (AI)', company_name: 'BluZoneBio', signature_website: 'www.bluzonebio.com',
   internal_domains: ['bluzonebio.com'], alert_address: 'casey@bluzonebio.com',
   graph_base_url: 'https://graph.test/v1.0', litellm_url: 'http://litellm.test/v1/chat/completions', llm_model: 'qwen-test',
   max_rounds: 4, holds_enabled: true, slot_step_min: 30, widen_window_days: 7, llm_choose_times: false,

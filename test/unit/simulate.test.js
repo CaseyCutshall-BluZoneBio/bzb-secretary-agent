@@ -32,7 +32,7 @@ test('simulator: request → offers → client picks → you say yes → booked,
   const intro = r1.emails.find((e) => e.to === 'client');
   assert.equal(intro.source, 'model');
   assert.match(intro.body, /^Hi Dana, would one of these work\?\n\n• /);
-  assert.match(intro.body, /Scheduling Assistant to Casey Cutshall \(AI\)/);
+  assert.match(intro.body, /Executive Assistant to Casey Cutshall \(AI\)/);
 
   const r2 = await turn(w, 'client', 'Option 2 works', llm);
   assert.equal(r2.state, 'AWAITING_VIC');

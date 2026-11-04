@@ -21,8 +21,10 @@ INSERT INTO settings (key, value, note) VALUES
   -- identities ----------------------------------------------------------------
   ('sarah_upn',          '"sarah.johnson@bluzonebio.com"', 'The shared mailbox. The ONLY sender.'),
   ('sarah_name',         '"Sarah Johnson"',                'First line of the signature.'),
-  ('signature_title',    '"Scheduling Assistant to Vic Suarez (AI)"', 'Second line of the signature — the AI disclosure.'),
-  ('company_name',       '"Blu Zone Bio"',                 'Third line of the signature.'),
+  ('signature_title',    '"Executive Assistant to Vic Suarez (AI)"', 'Second line of the signature — the AI disclosure.'),
+  ('company_name',       '"BluZoneBio"',                   'Third line of the signature.'),
+  ('signature_phone',    '""',                             'Phone line of the signature (fourth line). Empty = no phone line.'),
+  ('signature_website',  '"www.bluzonebio.com"',           'Last line of the signature ("Website: …"). Empty = no website line. The "Email:" line is sarah_upn.'),
   ('internal_domains',   '["bluzonebio.com"]',             'Addresses on these domains are internal (BZB staff). Sarah schedules with them like anyone else on To/CC.'),
   ('alert_address',      '"FILL IN: casey@bluzonebio.com"', 'Gets error alerts and shadow-mode review emails.'),
 

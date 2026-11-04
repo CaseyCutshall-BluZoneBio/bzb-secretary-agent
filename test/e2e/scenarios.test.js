@@ -81,7 +81,7 @@ test('live: trigger → intro → client picks option 2 → Vic says YES → boo
   assert.equal((text.match(/• /g) || []).length, 3, 'three options, as bullets');
   assert.match(text, /All times are Eastern \(UTC−0[45]:00\)/);
   assert.ok(!/\b\d\. \w+day/.test(text), 'no option numbers for the client');
-  assert.match(text, /Scheduling Assistant to Vic Suarez \(AI\)/);
+  assert.match(text, /Executive Assistant to Vic Suarez \(AI\)/);
   await waitFor('3 holds on Vic\'s calendar', () => holds().length === 3);
   for (const h of holds()) {
     assert.equal(h.owner, VIC);
@@ -257,7 +257,7 @@ async function enrollDelegated(upn, name) {
     SELECT $1, $1, 'oid-' || $1, $2, split_part($2, ' ', 1), timezone, working_hours, preferred_start, preferred_end,
            default_duration_min, default_location, hard_gap_min, preferred_gap_min, in_person_buffer_min, max_meetings_per_day,
            min_notice_hours, search_window_days, offers_per_round, bcc_after_intro, 'delegated', now(),
-           'Scheduling Assistant to ' || $2 || ' (AI)'
+           'Executive Assistant to ' || $2 || ' (AI)'
       FROM sched.employees WHERE upn = $3`, [upn, name, VIC]);
 }
 const BRAD = 'brad@bluzonebio.com';
@@ -272,7 +272,7 @@ test('delegated employee: holds and the booking use their own token through the 
   const intro = await waitFor('intro to Kai', () => sentTo('kai@fourthcoffee.com')[0]);
   assert.equal(intro.from, SARAH);
   assert.deepEqual(intro.bccRecipients.map((r) => r.emailAddress.address), [BRAD]);
-  assert.match(bodyOf(intro), /Scheduling Assistant to Brad Lee \(AI\)/);
+  assert.match(bodyOf(intro), /Executive Assistant to Brad Lee \(AI\)/);
   assert.ok(!/Vic/.test(bodyOf(intro).split('<hr')[0]), "Brad's client never sees Vic's name");
   const bradHolds = () => Object.values(S.events).filter((e) => e.owner === BRAD && (e.categories || []).includes('Sarah hold'));
   await waitFor("3 holds on Brad's calendar", () => bradHolds().length === 3);

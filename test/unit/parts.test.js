@@ -340,9 +340,9 @@ test('options read like a person wrote them: bullets, start times, the timezone 
 test('client emails end with a sign-off before the signature', () => {
   const D = require('../../src/draft');
   const { ctx } = require('./fixtures');
-  const emp = { signature_title: 'Scheduling Assistant to Vic Suarez (AI)' };
+  const emp = { signature_title: 'Executive Assistant to Vic Suarez (AI)' };
   assert.match(D.renderClientEmail(ctx(), 'Hi Dana. {{SLOTS}}', { slotsText: '• x' }, null, 'America/New_York', emp, 'new_round').body_text,
-    /\n\nBest,\nSarah Johnson\nScheduling Assistant to Vic Suarez \(AI\)\nBlu Zone Bio$/);
+    /\n\nBest,\nSarah Johnson\nExecutive Assistant to Vic Suarez \(AI\)\nBluZoneBio\nEmail: sarah\.johnson@bluzonebio\.com\nWebsite: www\.bluzonebio\.com$/);
   assert.match(D.renderClientEmail(ctx(), 'Great, {{TIME}} it is.', { timeText: 'x' }, null, 'America/New_York', emp, 'ack').body_text, /\n\nThanks,\nSarah Johnson\n/);
 });
 
