@@ -7,7 +7,7 @@ const F = require('../../src/format');
 const X = require('../../src/executor');
 const Pl = require('../../src/poller');
 const { route } = require('../../src/route');
-const { ctx, clientCtx, message, thread } = require('./fixtures');
+const { ctx, clientCtx, message, thread, VIC } = require('./fixtures');
 
 // ---------------------------------------------------------------------------
 // model output parsing
@@ -124,6 +124,18 @@ test('routing', () => {
   const bradThread = { client_addresses: ['brad@bluzonebio.com'], client_names: {} };
   assert.equal(route(clientCtx('Tuesday works', { thread: bradThread, ctx: { message: message({ ...brad, conversation_id: 'CONV-1' }) } })).kind, 'client_reply');
   assert.equal(route(clientCtx('fyi', { ctx: { message: message(brad) } })).disposition, 'ignored_internal_other');
+  // Enrolled in the portal too: on Vic's thread Brad is still an attendee, and
+  // can't take over (close) a thread that isn't his.
+  const BRAD = { id: 2, upn: 'brad@bluzonebio.com', mail: 'brad@bluzonebio.com', enrolled: true, first_name: 'Brad' };
+  const withBrad = (body, thread) => clientCtx(body, { thread, ctx: { employees: [VIC, BRAD], message: message({ ...brad, conversation_id: 'CONV-1' }) } });
+  assert.equal(route(withBrad('Tuesday works', bradThread)).kind, 'client_reply');
+  assert.equal(route(withBrad("I'll take it from here", {})).disposition, 'ignored_employee_note');
+  assert.equal(route(withBrad('Tuesday works', { ...bradThread, state: 'NEEDS_VIC', escalation_reason: 'x' })).disposition, 'ignored_thread_escalated');
+  const bradFb = withBrad('Tuesday works', bradThread);
+  bradFb.match_kind = 'fallback_sender';
+  assert.equal(route(bradFb).kind, 'client_reply');
+  // On his own thread he's still the employee.
+  assert.equal(route(withBrad('thanks', { ...bradThread, employee_id: 2 })).kind, 'employee_in_thread');
   const noAuth = ctx({ message: message({ headers: {} }) });
   assert.equal(route(noAuth).disposition, 'ignored_unauthenticated');
   noAuth.settings.require_internal_auth = false;

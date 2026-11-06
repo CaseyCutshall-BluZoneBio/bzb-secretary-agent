@@ -80,6 +80,15 @@ function route(ctx) {
       return { kind: 'ignore', disposition: 'ignored_employee_note', attach: true };
     }
     const addressed = [...(msg.to_addresses || []), ...(msg.cc_addresses || [])].map(lower).includes(sarah);
+    // On another employee's thread, an enrolled colleague is one of the people
+    // being met ("Tuesday works for me"), so they answer like any attendee.
+    // Otherwise their note is never actionable there: only the thread's own
+    // employee can take it over.
+    const others = thread && thread.employee_id !== employee.id;
+    if (others && clients(thread).includes(from)) return clientReply(ctx, thread, from);
+    if (others && ctx.match_kind === 'conversation' && !['BOOKED', 'CLOSED', 'STALLED'].includes(thread.state)) {
+      return { kind: 'ignore', disposition: 'ignored_employee_note', attach: true };
+    }
     if (thread && ctx.match_kind === 'conversation') {
       // A finished negotiation in this email thread: Vic may be asking for a
       // new meeting ("Sarah, find us a follow-up time"). The trigger
@@ -97,15 +106,22 @@ function route(ctx) {
   if (isInternal(from, domains)) {
     // A non-enrolled colleague (Brad, Josh...) only counts when Sarah is
     // scheduling with them; otherwise their notes are never actionable.
-    const isClient = thread && (thread.client_addresses || []).map(lower).includes(from);
+    const isClient = thread && clients(thread).includes(from);
     if (!isClient) return { kind: 'ignore', disposition: 'ignored_internal_other', attach: !!thread };
   }
 
   if (!thread) return { kind: 'ignore', disposition: 'ignored_no_thread' };
+  return clientReply(ctx, thread, from);
+}
+
+const clients = (thread) => (thread.client_addresses || []).map(lower);
+
+// A reply from someone Sarah is scheduling with, on a thread that exists.
+function clientReply(ctx, thread, from) {
   if (thread.state === 'CLOSED') return { kind: 'ignore', disposition: 'ignored_thread_closed', attach: true };
   if (thread.state === 'NEEDS_VIC') return { kind: 'ignore', disposition: 'ignored_thread_escalated', attach: true };
   // Fallback matches (broken thread) require the sender to already be a client.
-  if (ctx.match_kind !== 'conversation' && !(thread.client_addresses || []).map(lower).includes(from)) {
+  if (ctx.match_kind !== 'conversation' && !clients(thread).includes(from)) {
     return { kind: 'ignore', disposition: 'ignored_unknown_sender' };
   }
   return { kind: 'client_reply' };
